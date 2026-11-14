@@ -36,6 +36,10 @@ fun createAskRepository(
         // 卡 130 合并后统一用情境查询；没装配时退回问问自带的同语义实现
         { name, from, to -> if (app.resound.AppGraph.isSituationReady) app.resound.AppGraph.situation.staysAt(name, from, to) else places.staysAt(name, from, to) },
         { from, to -> places.placesDuring(from, to) })
+    val screenTools = app.resound.ask.core.AskScreenToolsCore(
+        { app.resound.AppGraph.screenTimeReader },
+        kotlinx.datetime.TimeZone.of(java.time.ZoneId.systemDefault().id),
+    )
     val changes = AskChanges(database, onChanged = { app.resound.search.EmbeddingScheduler.enqueue(context) })
     val suggestions = AskSuggestions(
         context.getSharedPreferences("ask-suggestions", Context.MODE_PRIVATE),
@@ -81,7 +85,10 @@ fun createAskRepository(
             // Tools 额度耗尽仍带定义；Prefetch 完全不发送 tools / tool_choice。
             settings.failover.stream("问答", session, messages, if (prefetching) JSONArray() else definitions, client, delta,
                 { p, c -> database.memory().addUsage(LocalDate.now().toString(), p, c, UsagePurpose.Ask) }, allowTools = requested.length() > 0)
-        }, definitions, placeTools::execute, { _, _ -> }, changes::propose,
+        }, definitions, { name, args, sources ->
+            if (name == "apps_during") JSONObject(screenTools.execute(args.toString(), sources))
+            else placeTools.execute(name, args, sources)
+        }, { _, _ -> }, changes::propose,
             mode = {
                 prefetching = compatibility.state(preset).fallback != null
                 if (prefetching) AskMode.Prefetch else AskMode.Tools

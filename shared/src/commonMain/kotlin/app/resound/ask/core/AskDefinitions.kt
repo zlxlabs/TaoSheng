@@ -260,6 +260,31 @@ object AskDefinitions {
         "additionalProperties": false
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "apps_during",
+      "description": "查某段时间手机上用了哪些 App、各用多久；只有开启屏幕时间时才有数据",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "YYYY-MM-DD 或 YYYY-MM-DD HH:mm"
+          },
+          "to": {
+            "type": "string",
+            "description": "YYYY-MM-DD 或 YYYY-MM-DD HH:mm"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      }
+    }
   }
 ]
 """
