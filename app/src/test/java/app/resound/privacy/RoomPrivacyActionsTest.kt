@@ -166,7 +166,7 @@ class RoomPrivacyActionsTest {
         var sinceFrom = 0L
         val puller = ScreenTimePuller(
             ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, def -> def }, saveLong = { _, _ -> true }),
+                readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now }),
             object : ScreenEventSource {
                 override fun permitted() = true
                 override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }

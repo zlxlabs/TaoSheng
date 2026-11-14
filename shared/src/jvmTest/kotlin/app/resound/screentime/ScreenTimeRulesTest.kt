@@ -102,17 +102,36 @@ class ScreenTimeRulesTest {
         assertEquals(listOf(AppSession("A", t, t + 300_000)), out)
     }
 
-    /** 测试 8a：同包两段间隔 4.9 秒（中间切到 B 极短）按切换收尾合并；B 极短段独立保留。 */
+    /** 测试（卡 186c 必测 7，改写 185a 必测 8 前半）：A 暂停 4.9 秒后同页 RESUMED，两段在输出里紧邻，合并为一段。 */
     @Test fun nearbySwitchClosedSessionsMerge() {
+        val events = listOf(
+            ev(1, t, "A", ScreenEventType.RESUMED, "Page1"),
+            ev(2, t + 600_000, "A", ScreenEventType.PAUSED, "Page1"),
+            ev(3, t + 604_900, "A", ScreenEventType.RESUMED, "Page1"),
+        )
+        assertEquals(
+            listOf(AppSession("A", t, t + 700_000)),
+            run(events, until = t + 700_000),
+        )
+    }
+
+    /** 测试（卡 186c 必测 6）：A、B(2 秒)、A 不合并（中间隔了别的输出段），三段互不重叠，totals 总和等于实际亮屏时长。 */
+    @Test fun sessionsSeparatedByOtherPackageDoNotMerge() {
         val events = listOf(
             ev(1, t, "A", ScreenEventType.RESUMED),
             ev(2, t + 600_000, "B", ScreenEventType.RESUMED),
-            ev(3, t + 604_900, "A", ScreenEventType.RESUMED),
+            ev(3, t + 602_000, "A", ScreenEventType.RESUMED),
         )
+        val out = run(events, until = t + 700_000)
         assertEquals(
-            listOf(AppSession("A", t, t + 700_000), AppSession("B", t + 600_000, t + 604_900)),
-            run(events, until = t + 700_000),
+            listOf(
+                AppSession("A", t, t + 600_000),
+                AppSession("B", t + 600_000, t + 602_000),
+                AppSession("A", t + 602_000, t + 700_000),
+            ),
+            out,
         )
+        assertEquals(700_000L, ScreenTimeRules.totals(out).sumOf { it.millis }) // 实际亮屏 [t, t+700000) 无重叠
     }
 
     /** 测试 8b：间隔仅 1 秒但前一段因熄屏收尾，不合并。 */

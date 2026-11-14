@@ -3,6 +3,7 @@ package app.resound.context
 
 import app.resound.envsound.*
 import app.resound.location.*
+import app.resound.screentime.NamedAppSession
 import kotlinx.datetime.*
 import kotlin.time.Instant
 import kotlinx.coroutines.sync.Mutex
@@ -23,11 +24,15 @@ class SituationStore(
     radians: (Double) -> Double,
     /** 定位记录的最早、最晚时间；没有记录为 null。用来收窄“不限日期”的查询，避免逐日遍历无限范围 */
     private val pointBounds: suspend () -> Pair<Long, Long>? = { null },
+    /** [from, until) 内手机前台使用段（卡 186c）；不受足迹开关 [available] 约束，由装配层传入，默认空。 */
+    appSessions: suspend (Long, Long) -> List<NamedAppSession> = { _, _ -> emptyList() },
 ) : SituationLookup {
     private val trackRules = TrackRules(radians)
     private val timeline = TimelineRules(trackRules::meters)
     private val places = DayCache<List<PlaceAt>>()
     private val environments = DayCache<List<EnvSoundRow>>()
+    // 构造参数与接口方法同名，转发一份避免同名解析歧义。
+    private val appSessionsQuery = appSessions
 
     override suspend fun placeDuring(start: Long, end: Long): PlaceAt? = withContext(io) {
         if (end <= start) return@withContext null
@@ -78,6 +83,11 @@ class SituationStore(
             }
         }
         durations.entries.sortedByDescending { it.value }.take(limit).map { it.key }
+    }
+
+    override suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = withContext(io) {
+        if (until <= from) return@withContext emptyList()
+        appSessionsQuery(from, until)
     }
 
     private suspend fun dayPlaces(day: Day): List<PlaceAt> = places.get(day, placeRevision()) {

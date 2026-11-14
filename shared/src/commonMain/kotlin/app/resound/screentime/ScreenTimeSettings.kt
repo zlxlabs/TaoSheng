@@ -9,8 +9,7 @@ class ScreenTimeSettings(
     private val saveBoolean: (String, Boolean) -> Boolean,
     private val readLong: (String, Long) -> Long,
     private val saveLong: (String, Long) -> Boolean,
-    /** 从关到开时通知；装配层据此异步查覆盖进度、补记 disabled 缺口（fromAt=coveredUntil，untilAt=此刻）。 */
-    private val onReenabled: () -> Unit = {},
+    private val now: () -> Long,
 ) {
     private val _enabled = MutableStateFlow(readBoolean(KEY, false))
     val enabled = _enabled.asStateFlow()
@@ -18,9 +17,13 @@ class ScreenTimeSettings(
     fun setEnabled(on: Boolean) {
         val was = _enabled.value
         check(saveBoolean(KEY, on))
-        if (!was && on) onReenabled()
+        // 从关到开时记录打开时刻：拉取起点与 disabled 缺口都以此为界，关闭期间不补采。
+        if (!was && on) check(saveLong(ENABLED_AT_KEY, now()))
         _enabled.value = on
     }
+
+    /** 最近一次从关到开的时刻（毫秒）；从未打开为 0。 */
+    val enabledAt: Long get() = readLong(ENABLED_AT_KEY, 0)
 
     /** 上次成功拉取时刻（毫秒）；0 表示从未拉过，只作节流判据，不进数据库。 */
     var lastPullAt: Long
@@ -31,5 +34,6 @@ class ScreenTimeSettings(
     companion object {
         const val KEY = "screenTimeEnabled"
         const val LAST_PULL_KEY = "screenTimeLastPullAt"
+        const val ENABLED_AT_KEY = "screenTimeEnabledAt"
     }
 }

@@ -124,6 +124,14 @@ class ScreenTimePushTest {
         }
     }
 
+    /** 卡 186c 必测 8：推送时刻为 0 点（或更早）时当天无数据，直接返回 null 且不查询 reader。 */
+    @Test fun midnightPushReturnsNullWithoutQueryingReader() = runBlocking {
+        val midnight = t(0, 0)
+        val forbidden = ScreenTimeReader { _, _ -> error("0 点推送不得查询 reader") }
+        assertNull(loadScreenTimeReport(date, midnight, zone, forbidden))
+        assertNull(loadScreenTimeReport(date, midnight - 1, zone, forbidden)) // 0 点前同理：until 不晚于 from
+    }
+
     @Test fun subscriptionDocumentAddsAndRemovesScreenTimeSection() = runBlocking {
         val opened = replaceScreenTimeSection("# 当天\n\n正文\n", "今日共 3 小时 12 分\n\n- 哔哩哔哩 192 分")
         assertTrue(opened.contains("<!-- resound:screen-time -->"))

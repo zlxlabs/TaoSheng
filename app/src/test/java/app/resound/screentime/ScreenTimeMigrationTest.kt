@@ -93,7 +93,7 @@ class ScreenTimeMigrationTest {
                 override suspend fun appNames(pkgs: Set<String>) = mapOf("com.example.app" to "示例")
             }
             val settings = ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, _ -> savedPull }, saveLong = { _, v -> savedPull = v; true })
+                readLong = { _, _ -> savedPull }, saveLong = { _, v -> savedPull = v; true }, now = { clock })
             val puller = ScreenTimePuller(settings, source, db.screenTime(), now = { clock },
                 denied = { it is SecurityException }, diagnostic = {})
             AppGraph.screenTimePuller = puller
