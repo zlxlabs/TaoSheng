@@ -78,6 +78,10 @@ interface ScreenTimeDao {
     @Query("SELECT * FROM playback_rows WHERE untilAt IS NULL")
     suspend fun openPlaybacks(): List<PlaybackRow>
 
+    /** 总开关重新打开后：上次开启期间留下的未结束行收尾在各自 lastSeenAt，不另写缺口。 */
+    @Query("UPDATE playback_rows SET untilAt = lastSeenAt WHERE untilAt IS NULL AND lastSeenAt < :enabledAt")
+    suspend fun closeOpenPlaybacksBefore(enabledAt: Long)
+
     /** 与 [from, until) 重叠的播放行；有效终点 = COALESCE(untilAt, lastSeenAt)。 */
     @Query("SELECT * FROM playback_rows WHERE fromAt < :until AND COALESCE(untilAt, lastSeenAt) > :from ORDER BY fromAt, id")
     suspend fun playbacksOverlapping(from: Long, until: Long): List<PlaybackRow>
