@@ -36,14 +36,18 @@ class MediaProbeService : NotificationListenerService() {
             registrations.clear()
             (controllers ?: emptyList()).forEach { c ->
                 logLine("snapshot", c, c.playbackState, c.metadata)
-                registrations.add(c to makeCallback(c))
+                val cb = makeCallback(c)
+                c.registerCallback(cb)
+                registrations.add(c to cb)
             }
         }
         sessionsListener = listener
         m.addOnActiveSessionsChangedListener(listener, componentName)
         m.getActiveSessions(componentName).forEach { c ->
             logLine("snapshot", c, c.playbackState, c.metadata)
-            registrations.add(c to makeCallback(c))
+            val cb = makeCallback(c)
+            c.registerCallback(cb)
+            registrations.add(c to cb)
         }
     }
 
