@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# gate-v2 quality entry（zlxlabs/gate-hub onboarding.md §6）：退出码定红绿，无 fallback。
+# JDK 由 gate-v2 经 mise 提供（caller quality_prepare_mise: true + 仓内 mise.toml java=21）。
+set -euo pipefail
+python3 tools/check_shared.py
+python3 tools/check_devices.py
+mise trust
+mise install
+exec mise exec -- ./gradlew --no-daemon -PskipSigningSecrets=true :shared:jvmTest

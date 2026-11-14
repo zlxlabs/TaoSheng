@@ -56,3 +56,12 @@
 - 新业务规则文件放 `:shared` 共用模块。
 - 提交前跑 `python3 tools/check_shared.py` 和 `./gradlew :shared:check`。
 - 改了 `:shared` 或 `:devices` 的共用代码，提交前再跑 `zsh tools/check_ios.sh`（iOS 真机与模拟器编译检查，需本机已装 Xcode；脚本会自动清理 iOS 中间产物）。
+
+## 上游贡献约定（0xCoach/TaoSheng 复刻仓）
+
+本仓是 `0xCoach/TaoSheng` 的公开复刻，CI 接入 zlxlabs/gate-hub 的 Required Gate v2（Ref zlxlabs/gate-hub#2410）。
+
+- 向上游贡献：从上游 `main` 新开分支，只带功能提交；不带 `.github/workflows/gate*.yml`、`scripts/gate-quality`、`mise.toml`、`.devcontainer/` 等 gate 附属文件（这些只属于本复刻）。
+- CI 分工：`gate` = 边界检查 + 模型主审（gate-hub v2）；`android.yml` / `ios.yml` = 编译与单测。
+- 合并前须绿：合并闸只要求 `gate / primary`，`Android 检查` 红不挡合并——合并前人工核对 Android/iOS 两个工作流在同一 head 上均为 SUCCESS。
+- 复刻与上游的 build 文件（`settings.gradle.kts`、`shared/`、`app/`、`devices/`、`tools/`）保持零分歧，避免两岸漂移。
