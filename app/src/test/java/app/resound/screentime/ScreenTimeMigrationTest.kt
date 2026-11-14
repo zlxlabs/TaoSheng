@@ -106,3 +106,42 @@ class ScreenTimeMigrationTest {
         } finally { WorkManagerTestInitHelper.closeWorkDatabase() }
     }
 }
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [29], manifest = Config.NONE, application = Application::class)
+@SQLiteMode(SQLiteMode.Mode.NATIVE)
+class PlaybackRowsMigrationTest {
+    /** 必测 1：35→36 后 playback_rows 和两个索引存在。 */
+    @Test fun migrate35CreatesPlaybackTableAndIndexes() = runBlocking(Dispatchers.IO) {
+        val context = RuntimeEnvironment.getApplication()
+        val name = "playback-rows-migration.db"; context.deleteDatabase(name)
+        val schema = JSONObject(File("../shared/schemas/app.resound.data.CaptureDatabase/35.json").readText()).getJSONObject("database")
+        context.openOrCreateDatabase(name, 0, null).use { old ->
+            val entities = schema.getJSONArray("entities")
+            for (i in 0 until entities.length()) {
+                val e = entities.getJSONObject(i)
+                fun sql(s: String) = s.replace("\u0024{TABLE_NAME}", e.getString("tableName"))
+                old.execSQL(sql(e.getString("createSql")))
+                val indices = e.optJSONArray("indices") ?: JSONArray()
+                for (j in 0 until indices.length()) old.execSQL(sql(indices.getJSONObject(j).getString("createSql")))
+            }
+            val queries = schema.getJSONArray("setupQueries"); for (i in 0 until queries.length()) old.execSQL(queries.getString(i))
+            old.version = 35
+        }
+        val db = Room.databaseBuilder(context, CaptureDatabase::class.java, name)
+            .setDriver(androidx.sqlite.driver.AndroidSQLiteDriver()).allowMainThreadQueries()
+            .addMigrations(*CaptureDatabase.MIGRATIONS).build()
+        try {
+            assertEquals(CaptureDatabase.VERSION, db.testSql.version)
+            val tables = db.testSql.query("SELECT name FROM sqlite_master WHERE type='table'").use { rows ->
+                buildList { if (rows.moveToFirst()) do { add(rows.getString(0)) } while (rows.moveToNext()) }
+            }
+            assertTrue("缺表 playback_rows", "playback_rows" in tables)
+            val indexNames = db.testSql.query("SELECT name FROM sqlite_master WHERE type='index'").use { rows ->
+                buildList { if (rows.moveToFirst()) do { add(rows.getString(0)) } while (rows.moveToNext()) }
+            }
+            assertTrue("缺 fromAt 索引", "index_playback_rows_fromAt" in indexNames)
+            assertTrue("缺 sessionKey 索引", "index_playback_rows_sessionKey" in indexNames)
+        } finally { db.close(); context.deleteDatabase(name) }
+    }
+}

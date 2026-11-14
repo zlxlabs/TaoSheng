@@ -28,6 +28,16 @@ private class FakeDao : ScreenTimeDao {
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap }
     override suspend fun deleteEvents(from: Long, until: Long) { rows.removeAll { it.at >= from && it.at < until } }
     override suspend fun lastEventAt() = rows.maxOfOrNull { it.at }
+    override suspend fun openPlayback(sessionKey: String): PlaybackRow? = null
+    override suspend fun insertPlayback(row: PlaybackRow) = 0L
+    override suspend fun updatePlayback(row: PlaybackRow) {}
+    override suspend fun openPlaybacks() = emptyList<PlaybackRow>()
+    override suspend fun playbacksOverlapping(from: Long, until: Long) = emptyList<PlaybackRow>()
+    override suspend fun openEndedGaps(source: String, openUntil: Long) = emptyList<ScreenCoverageGapRow>()
+    override suspend fun closeGap(id: Long, untilAt: Long) {}
+    override suspend fun deletePlaybackInside(from: Long, until: Long) {}
+    override suspend fun truncatePlaybackLeft(from: Long) {}
+    override suspend fun truncatePlaybackRight(from: Long, until: Long) {}
     override suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long,
                                     gaps: List<ScreenCoverageGapRow>) {
         if (failNames && names.isNotEmpty()) throw IllegalStateException("names failed")

@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import androidx.room.Upsert
 
 /** 屏幕时间读写。读四个方法是卡 186 固定消费的签名；写方法只服务本卡拉取与隐私删除。 */
@@ -63,5 +64,56 @@ interface ScreenTimeDao {
         for (gap in gaps) recordGap(gap)
         if (insertStateRow(ScreenPullStateRow(SCREEN_SOURCE, coveredUntil, 0)) == -1L)
             updateCoveredUntil(SCREEN_SOURCE, coveredUntil)
+    }
+
+    @Query("SELECT * FROM playback_rows WHERE sessionKey = :sessionKey AND untilAt IS NULL LIMIT 1")
+    suspend fun openPlayback(sessionKey: String): PlaybackRow?
+
+    @Insert
+    suspend fun insertPlayback(row: PlaybackRow): Long
+
+    @Update
+    suspend fun updatePlayback(row: PlaybackRow)
+
+    @Query("SELECT * FROM playback_rows WHERE untilAt IS NULL")
+    suspend fun openPlaybacks(): List<PlaybackRow>
+
+    /** 与 [from, until) 重叠的播放行；有效终点 = COALESCE(untilAt, lastSeenAt)。 */
+    @Query("SELECT * FROM playback_rows WHERE fromAt < :until AND COALESCE(untilAt, lastSeenAt) > :from ORDER BY fromAt, id")
+    suspend fun playbacksOverlapping(from: Long, until: Long): List<PlaybackRow>
+
+    @Query("SELECT * FROM screen_coverage_gaps WHERE source = :source AND untilAt = :openUntil ORDER BY fromAt, id")
+    suspend fun openEndedGaps(source: String, openUntil: Long): List<ScreenCoverageGapRow>
+
+    @Query("UPDATE screen_coverage_gaps SET untilAt = :untilAt WHERE id = :id")
+    suspend fun closeGap(id: Long, untilAt: Long)
+
+    @Query("DELETE FROM playback_rows WHERE fromAt >= :from AND COALESCE(untilAt, lastSeenAt) <= :until")
+    suspend fun deletePlaybackInside(from: Long, until: Long)
+
+    @Query("UPDATE playback_rows SET untilAt = :from, lastSeenAt = MIN(lastSeenAt, :from) WHERE fromAt < :from AND COALESCE(untilAt, lastSeenAt) > :from")
+    suspend fun truncatePlaybackLeft(from: Long)
+
+    @Query("UPDATE playback_rows SET fromAt = :until WHERE fromAt >= :from AND fromAt < :until AND COALESCE(untilAt, lastSeenAt) > :until")
+    suspend fun truncatePlaybackRight(from: Long, until: Long)
+
+    /** 隐私删除：[from, until) 内整行删除，跨左边界（含同时跨两侧）只留左半段，跨右边界把起点挪到 until。 */
+    @Transaction
+    suspend fun forgetPlayback(from: Long, until: Long) {
+        deletePlaybackInside(from, until)
+        truncatePlaybackLeft(from)
+        truncatePlaybackRight(from, until)
+    }
+
+    @Transaction
+    suspend fun closeOpenPlaybacksAtLastSeen() {
+        for (row in openPlaybacks()) updatePlayback(row.copy(untilAt = row.lastSeenAt))
+    }
+
+    @Transaction
+    suspend fun closePlaybackDisconnectGaps(at: Long): Int {
+        val open = openEndedGaps(PLAYBACK_SOURCE, Long.MAX_VALUE)
+        for (gap in open) closeGap(gap.id, at)
+        return open.size
     }
 }

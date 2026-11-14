@@ -142,6 +142,7 @@ class RoomPrivacyActions(
                 // 卡 185b：按时间遗忘时屏幕时间原始事件一并删除，删除下限提到区间终点，防被拉取拉回。
                 screenRange?.let { (from, until) ->
                     db.screenTime().deleteEvents(from, until)
+                    db.screenTime().forgetPlayback(from, until)
                     db.screenTime().raiseFloor(app.resound.screentime.SCREEN_SOURCE, until)
                 }
                 ForgetResult(deletedSegments, lines, deletedEvents, items)

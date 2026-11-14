@@ -59,7 +59,7 @@ interface CaptureDao {
     AskConversationEntity::class, AskMessageEntity::class, ReviewEntity::class, app.resound.search.LineFts::class, app.resound.search.EventFts::class,
     app.resound.search.ItemFts::class, app.resound.search.EmbeddingEntity::class,
     PendingDigest::class, app.resound.envsound.EnvSoundRow::class, app.resound.skills.SkillCardRow::class, app.resound.skills.SkillRunRow::class, app.resound.location.LocationPoint::class, app.resound.location.PlaceRow::class,
-    app.resound.screentime.ScreenEventRow::class, app.resound.screentime.ScreenAppNameRow::class, app.resound.screentime.ScreenPullStateRow::class, app.resound.screentime.ScreenCoverageGapRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
+    app.resound.screentime.ScreenEventRow::class, app.resound.screentime.ScreenAppNameRow::class, app.resound.screentime.ScreenPullStateRow::class, app.resound.screentime.ScreenCoverageGapRow::class, app.resound.screentime.PlaybackRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
 @ConstructedBy(CaptureDatabaseConstructor::class)
 abstract class CaptureDatabase : RoomDatabase() {
     /** 由安卓装配入口传入；内存测试库为 null，不从底层连接反查路径。 */
@@ -87,7 +87,7 @@ abstract class CaptureDatabase : RoomDatabase() {
     abstract fun screenTime(): app.resound.screentime.ScreenTimeDao
     companion object {
         /** 当前数据库版本；加迁移时同步改这里 */
-        const val VERSION = 35
+        const val VERSION = 36
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
@@ -350,7 +350,15 @@ abstract class CaptureDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_screen_coverage_gaps_source_fromAt` ON `screen_coverage_gaps` (`source`, `fromAt`)")
             }
         }
-        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
+        /** 卡 190a：设备播放记录表；untilAt 播放中为 null。SQL 与实体 createSql 对齐，避免两路径 sqlite_master 文本分叉。 */
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: androidx.sqlite.SQLiteConnection) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `playback_rows` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionKey` TEXT NOT NULL, `pkg` TEXT NOT NULL, `name` TEXT NOT NULL, `title` TEXT, `subtitle` TEXT, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER, `lastSeenAt` INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_rows_fromAt` ON `playback_rows` (`fromAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_rows_sessionKey` ON `playback_rows` (`sessionKey`)")
+            }
+        }
+        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
     }
 }
 

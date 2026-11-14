@@ -175,4 +175,19 @@ class RoomPrivacyActionsTest {
         puller.pull()
         assertTrue(sinceFrom >= now)
     }
+
+    /** 必测 8：区间内的播放行删除，跨左边界的行截断到 from。 */
+    @Test fun deleteRangeRemovesInsidePlaybackAndTruncatesLeftCrossing() = runBlocking {
+        val from = now - 60_000
+        db.screenTime().insertPlayback(PlaybackRow(sessionKey = "in", pkg = "a", name = "a", title = "内",
+            subtitle = null, fromAt = from + 1_000, untilAt = now - 1_000, lastSeenAt = now - 1_000))
+        db.screenTime().insertPlayback(PlaybackRow(sessionKey = "left", pkg = "b", name = "b", title = "跨左",
+            subtitle = null, fromAt = now - 90_000, untilAt = null, lastSeenAt = now - 10_000))
+        privacy.deleteRange(from, now)
+        val left = db.screenTime().playbacksOverlapping(0, now + 1).single()
+        assertEquals("left", left.sessionKey)
+        assertEquals(now - 90_000, left.fromAt)
+        assertEquals(from, left.untilAt)
+        assertEquals(from, left.lastSeenAt)
+    }
 }

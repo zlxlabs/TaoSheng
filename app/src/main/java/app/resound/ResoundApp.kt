@@ -142,8 +142,11 @@ class ResoundApp : Application() {
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
             .filter { it.priority >= 0 }
             .mapNotNull { it.activityInfo?.packageName }.toSet() + "com.android.systemui"
+        AppGraph.playbackSink = app.resound.screentime.PlaybackRecorder(
+            database.screenTime(), screenTimeSettings, screenTimeSource::appNames)
         AppGraph.screenTimeReader = app.resound.screentime.ScreenTimeQueries(database.screenTime(),
             AppGraph.screenTimePuller, screenTimeSettings, permitted = screenTimeSource::permitted,
+            playbackPermitted = { androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName) },
             excluded = launcherPkgs, now = AppGraph.platform.now::now)
         // 开关变化时重排每小时拉取任务；变为开时立即补拉一次，不等整点。
         scope.launch {
