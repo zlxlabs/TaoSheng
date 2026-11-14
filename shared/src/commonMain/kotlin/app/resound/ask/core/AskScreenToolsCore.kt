@@ -2,6 +2,7 @@ package app.resound.ask.core
 import app.resound.ask.*
 import app.resound.net.Arr as JSONArray
 import app.resound.net.Obj as JSONObject
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.NamedAppSession
 import app.resound.screentime.ScreenTimeReader
 import app.resound.screentime.ScreenTimeResult
@@ -44,21 +45,39 @@ class AskScreenToolsCore(
             val ref = if (existing >= 0) existing + 1 else sources.size + 1
             sessionsArr.put(JSONObject().put("ref", ref).put("name", session.name).put("package", session.pkg)
                 .put("start", AskTime.format(session.from, zone)).put("end", AskTime.format(session.until, zone)))
-            if (payload(totalsArr, sessionsArr, result, false).length > 6000) {
+            if (payload(totalsArr, sessionsArr, JSONArray(), result, false).length > 6000) {
                 sessionsArr.remove(sessionsArr.length() - 1)
                 truncated = true
                 break
             }
             if (existing < 0) sources += source
         }
-        return payload(totalsArr, sessionsArr, result, truncated)
+        val playbackArr = JSONArray()
+        if (!truncated) for (item in result.devicePlayback.sortedBy { it.from }) {
+            val source = source(item)
+            val existing = sources.indexOf(source)
+            val ref = if (existing >= 0) existing + 1 else sources.size + 1
+            playbackArr.put(JSONObject().put("ref", ref).put("name", item.name).put("package", item.pkg)
+                .put("title", item.title ?: JSONObject.NULL).put("subtitle", item.subtitle ?: JSONObject.NULL)
+                .put("start", AskTime.format(item.from, zone)).put("end", AskTime.format(item.until, zone)))
+            if (payload(totalsArr, sessionsArr, playbackArr, result, false).length > 6000) {
+                playbackArr.remove(playbackArr.length() - 1)
+                truncated = true
+                break
+            }
+            if (existing < 0) sources += source
+        }
+        return payload(totalsArr, sessionsArr, playbackArr, result, truncated)
     }
 
-    private fun payload(totals: JSONArray, sessions: JSONArray, result: ScreenTimeResult, truncated: Boolean): String {
+    private fun payload(
+        totals: JSONArray, sessions: JSONArray, playback: JSONArray,
+        result: ScreenTimeResult, truncated: Boolean,
+    ): String {
         val gaps = JSONArray()
         for (gap in result.gaps) gaps.put(JSONObject().put("code", gap.code).put("source", gap.source)
             .put("from", AskTime.format(gap.from, zone)).put("until", AskTime.format(gap.until, zone)).put("fix", gap.fix))
-        return JSONObject().put("totals", totals).put("sessions", sessions).put("devicePlayback", JSONArray())
+        return JSONObject().put("totals", totals).put("sessions", sessions).put("devicePlayback", playback)
             .put("coverageUntil", result.coverageUntil?.let { AskTime.format(it, zone) } ?: JSONObject.NULL)
             .put("gaps", gaps).put("truncated", truncated).toString()
     }
@@ -66,6 +85,10 @@ class AskScreenToolsCore(
     private fun source(session: NamedAppSession) = AskSource(
         "screen", session.from, session.from, "${session.name} 使用",
         "${clock(session.from)}\u2013${clock(session.until)} ${session.name}",
+    )
+    private fun source(item: DevicePlayback) = AskSource(
+        "playback", item.from, item.from, "${item.name} 播放",
+        "${clock(item.from)}\u2013${clock(item.until)} ${item.name}《${item.title ?: ""}》",
     )
     private fun clock(at: Long) = AskTime.format(at, zone).takeLast(5)
 

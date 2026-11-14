@@ -3,6 +3,7 @@ package app.resound.context
 
 import app.resound.envsound.*
 import app.resound.location.*
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.NamedAppSession
 import kotlinx.datetime.*
 import kotlin.time.Instant
@@ -26,6 +27,8 @@ class SituationStore(
     private val pointBounds: suspend () -> Pair<Long, Long>? = { null },
     /** [from, until) 内手机前台使用段（卡 186c）；不受足迹开关 [available] 约束，由装配层传入，默认空。 */
     appSessions: suspend (Long, Long) -> List<NamedAppSession> = { _, _ -> emptyList() },
+    /** [from, until) 内设备播放记录（卡 190c）；不受足迹开关约束，默认空。 */
+    devicePlayback: suspend (Long, Long) -> List<DevicePlayback> = { _, _ -> emptyList() },
 ) : SituationLookup {
     private val trackRules = TrackRules(radians)
     private val timeline = TimelineRules(trackRules::meters)
@@ -33,6 +36,7 @@ class SituationStore(
     private val environments = DayCache<List<EnvSoundRow>>()
     // 构造参数与接口方法同名，转发一份避免同名解析歧义。
     private val appSessionsQuery = appSessions
+    private val devicePlaybackQuery = devicePlayback
 
     override suspend fun placeDuring(start: Long, end: Long): PlaceAt? = withContext(io) {
         if (end <= start) return@withContext null
@@ -88,6 +92,11 @@ class SituationStore(
     override suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = withContext(io) {
         if (until <= from) return@withContext emptyList()
         appSessionsQuery(from, until)
+    }
+
+    override suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> = withContext(io) {
+        if (until <= from) return@withContext emptyList()
+        devicePlaybackQuery(from, until)
     }
 
     private suspend fun dayPlaces(day: Day): List<PlaceAt> = places.get(day, placeRevision()) {

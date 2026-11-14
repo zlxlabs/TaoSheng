@@ -59,7 +59,14 @@ internal fun screenTimePayload(report: ScreenTimeReport, zone: java.time.ZoneId)
                     .put("start", iso(session.from)).put("end", iso(session.until)))
             }
         })
-        .put("devicePlayback", JSONArray())
+        .put("devicePlayback", JSONArray().also { arr ->
+            report.result.devicePlayback.forEach { item ->
+                arr.put(JSONObject().put("package", item.pkg).put("name", item.name)
+                    .put("title", item.title ?: JSONObject.NULL)
+                    .put("subtitle", item.subtitle ?: JSONObject.NULL)
+                    .put("start", iso(item.from)).put("end", iso(item.until)))
+            }
+        })
         .put("gaps", JSONArray().also { arr ->
             report.result.gaps.forEach { gap ->
                 arr.put(JSONObject().put("code", gap.code).put("source", gap.source)
