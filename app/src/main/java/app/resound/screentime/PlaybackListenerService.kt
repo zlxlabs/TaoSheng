@@ -155,8 +155,9 @@ class PlaybackListenerService : NotificationListenerService() {
         const val HEARTBEAT_MS = 60_000L
 
         // 拼上包名：hashCode 会撞，包名把不同 App 的会话隔开，避免两路播放收成一行。
+        // 不用 identityHashCode：每次会话列表回调都会新建 Token 对象，同一会话会被切成多行；Token.hashCode 按会话值计算，稳定。
         fun sessionKey(controller: MediaController) =
-            "${controller.packageName}:${System.identityHashCode(controller.sessionToken)}:${controller.sessionToken.hashCode()}"
+            "${controller.packageName}:${controller.sessionToken.hashCode()}"
 
         fun isPlaying(state: PlaybackState?) = state?.state == PlaybackState.STATE_PLAYING
 
