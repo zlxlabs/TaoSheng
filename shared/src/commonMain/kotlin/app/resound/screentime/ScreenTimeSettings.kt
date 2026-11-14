@@ -19,11 +19,16 @@ class ScreenTimeSettings(
         check(saveBoolean(KEY, on))
         // 从关到开时记录打开时刻：拉取起点与 disabled 缺口都以此为界，关闭期间不补采。
         if (!was && on) check(saveLong(ENABLED_AT_KEY, now()))
+        // 从开到关时记录关闭时刻：disabled 缺口从这里起算，关闭前仍开着的使用不丢（186d）。
+        if (was && !on) check(saveLong(DISABLED_AT_KEY, now()))
         _enabled.value = on
     }
 
     /** 最近一次从关到开的时刻（毫秒）；从未打开为 0。 */
     val enabledAt: Long get() = readLong(ENABLED_AT_KEY, 0)
+
+    /** 最近一次从开到关的时刻（毫秒）；从未关闭为 0。 */
+    val disabledAt: Long get() = readLong(DISABLED_AT_KEY, 0)
 
     /** 上次成功拉取时刻（毫秒）；0 表示从未拉过，只作节流判据，不进数据库。 */
     var lastPullAt: Long
@@ -35,5 +40,6 @@ class ScreenTimeSettings(
         const val KEY = "screenTimeEnabled"
         const val LAST_PULL_KEY = "screenTimeLastPullAt"
         const val ENABLED_AT_KEY = "screenTimeEnabledAt"
+        const val DISABLED_AT_KEY = "screenTimeDisabledAt"
     }
 }

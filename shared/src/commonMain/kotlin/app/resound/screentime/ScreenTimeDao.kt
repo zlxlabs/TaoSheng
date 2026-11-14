@@ -54,11 +54,13 @@ interface ScreenTimeDao {
     @Query("SELECT MAX(at) FROM screen_events")
     suspend fun lastEventAt(): Long?
 
-    /** 一次拉取的事件、名称与覆盖指针在同一事务落库；失败整体回滚、不留副作用。 */
+    /** 一次拉取的事件、名称、缺口与覆盖指针在同一事务落库；失败整体回滚、不留副作用（缺口与指针同生同灭，不重复写）。 */
     @Transaction
-    suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long) {
+    suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long,
+                           gaps: List<ScreenCoverageGapRow>) {
         if (events.isNotEmpty()) insertEvents(events)
         if (names.isNotEmpty()) upsertNames(names)
+        for (gap in gaps) recordGap(gap)
         if (insertStateRow(ScreenPullStateRow(SCREEN_SOURCE, coveredUntil, 0)) == -1L)
             updateCoveredUntil(SCREEN_SOURCE, coveredUntil)
     }
