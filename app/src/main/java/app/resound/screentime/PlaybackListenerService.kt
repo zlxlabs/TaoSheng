@@ -44,14 +44,14 @@ class PlaybackListenerService : NotificationListenerService() {
         emit { it.connected(System.currentTimeMillis()) }
         val m = getSystemService(MediaSessionManager::class.java)
         manager = m
-        val sessions = m.getActiveSessions(componentName)
-        sessions.forEach { addSession(it) }
-        Log.i(TAG, "playback: connected sessions=" + sessions.size)
         val listener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
             onSessionsChanged(controllers ?: emptyList())
         }
         sessionsListener = listener
         m.addOnActiveSessionsChangedListener(listener, componentName, mainHandler)
+        val sessions = m.getActiveSessions(componentName)
+        sessions.forEach { addSession(it) }
+        Log.i(TAG, "playback: connected sessions=" + sessions.size)
         startHeartbeat()
     }
 
@@ -154,7 +154,9 @@ class PlaybackListenerService : NotificationListenerService() {
         const val TAG = "playback"
         const val HEARTBEAT_MS = 60_000L
 
-        fun sessionKey(controller: MediaController) = controller.sessionToken.hashCode().toString()
+        // 拼上包名：hashCode 会撞，包名把不同 App 的会话隔开，避免两路播放收成一行。
+        fun sessionKey(controller: MediaController) =
+            "${controller.packageName}:${System.identityHashCode(controller.sessionToken)}:${controller.sessionToken.hashCode()}"
 
         fun isPlaying(state: PlaybackState?) = state?.state == PlaybackState.STATE_PLAYING
 
