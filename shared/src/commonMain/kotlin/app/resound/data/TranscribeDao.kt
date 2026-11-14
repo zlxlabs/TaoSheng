@@ -28,6 +28,8 @@ data class SegmentWithLines(@Embedded val segment: SegmentEntity,
 data class QueueCounts(val pending: Int, val failed: Int, val running: Boolean)
 data class VoiceprintCounts(val processed: Int, val pending: Int)
 data class AsrUsageTotals(val todayMillis: Long, val totalMillis: Long)
+/** 手机麦克风片段的外放毫秒数快照，供整理提示标注外放。 */
+data class SegmentPlayback(val id: Long, val playbackMillis: Long)
 
 @Dao
 abstract class TranscribeDao {
@@ -167,6 +169,9 @@ abstract class TranscribeDao {
     abstract suspend fun topicTraining(id: Long)
     @Query("SELECT id FROM segments WHERE id IN (:ids) AND separateSpeakers = 0 AND (importChannel IS NULL OR speakerCount = 0)")
     abstract suspend fun unseparated(ids: List<Long>): List<Long>
+    /** 外放提示只认手机麦克风片段；阈值判定在 SituationPrompt，这里不按毫秒数过滤。 */
+    @Query("SELECT id, playbackMillis FROM segments WHERE id IN (:ids) AND sourceId = 'mic'")
+    abstract suspend fun playbackMillis(ids: List<Long>): List<SegmentPlayback>
     @Update abstract suspend fun update(row: SegmentEntity)
     @Query("SELECT * FROM segments WHERE id = :id") abstract suspend fun findSegment(id: Long): SegmentEntity?
     @Query("UPDATE segments SET status = 'Running', attempts = attempts + 1, nextRetryAt = NULL, error = NULL WHERE id = :id AND status IN ('Pending', 'Failed')")
