@@ -87,6 +87,8 @@ internal suspend fun loadScreenTimeReport(
     if (reader == null) return null
     val from = date.atStartOfDay(zone).toInstant().toEpochMilli()
     val until = now.coerceAtLeast(from)
+    // 推送时刻不晚于当天 0 点：当天还没有数据，不查询（reader 对空区间会直接抛参数异常）。
+    if (until <= from) return null
     val result = reader.sessions(from, until)
     return ScreenTimeReports.build(date.toKotlinLocalDate(), TimeZone.of(zone.id), result)
 }

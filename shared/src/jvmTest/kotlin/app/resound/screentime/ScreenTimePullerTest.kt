@@ -55,11 +55,12 @@ private class FakeSource(var permitted: Boolean = true, var events: List<RawScre
 private class FakeSettings(var on: Boolean = true) {
     var clock = 1_000_000_000_000L
     var lastPull = 0L
-    val gapCalls = mutableListOf<Int>()
+    var enabledAt = 0L
     val settings = ScreenTimeSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, value -> on = value; true },
-        readLong = { _, _ -> lastPull }, saveLong = { _, value -> lastPull = value; true },
-        onReenabled = { gapCalls += gapCalls.size + 1 })
+        readLong = { key, _ -> if (key == ScreenTimeSettings.ENABLED_AT_KEY) enabledAt else lastPull },
+        saveLong = { key, value -> if (key == ScreenTimeSettings.ENABLED_AT_KEY) enabledAt = value else lastPull = value; true },
+        now = { clock })
     fun puller(source: ScreenEventSource, dao: ScreenTimeDao, denied: (Throwable) -> Boolean = { false }) =
         ScreenTimePuller(settings, source, dao, now = { clock }, denied = denied)
 }
@@ -183,19 +184,45 @@ class ScreenTimePullerTest {
         }
         assertEquals("IllegalArgumentException", (env.puller(broken, dao).pull() as PullResult.Failed).type)
     }
+
+    /** 卡 186c 必测 5：关→开后拉取起点不早于 enabledAt，写且只写一条 disabled 缺口；覆盖推进后不重复写。 */
+    @Test fun reopenPullsFromEnabledAtAndWritesSingleDisabledGap() = runBlocking {
+        val dao = FakeDao()
+        val coveredBefore = 1_000_000_000_000L - 3_600_000
+        dao.commitPull(emptyList(), emptyList(), coveredBefore) // 关闭前覆盖到 coveredBefore
+        val env = FakeSettings(on = false)
+        env.clock = coveredBefore + 1_800_000 // 关闭 30 分钟后重新打开
+        env.settings.setEnabled(true)
+        assertEquals(env.clock, env.enabledAt) // 关→开写入 enabledAt
+        val source = FakeSource()
+        assertEquals(PullResult.Pulled(0), env.puller(source, dao).pull())
+        assertEquals(env.enabledAt, source.calls.single().first) // since 起点正好是 enabledAt
+        assertEquals(1, dao.gaps.size)
+        val gap = dao.gaps.single()
+        assertEquals("disabled", gap.code)
+        assertEquals(coveredBefore, gap.fromAt)
+        assertEquals(env.enabledAt, gap.untilAt)
+        env.clock += 31_000
+        assertEquals(PullResult.Pulled(0), env.puller(source, dao).pull())
+        assertEquals(1, dao.gaps.size) // 覆盖已推进，不重复写
+    }
 }
 
 class ScreenTimeSettingsTest {
-    @Test fun reenablingNotifiesOnlyWhenSwitchingFromOff() {
+    @Test fun reenablingWritesEnabledAtOnlyWhenSwitchingFromOff() {
         val env = FakeSettings(on = false)
         env.settings.setEnabled(true)
-        assertEquals(1, env.gapCalls.size) // 关→开通知补缺口
+        assertEquals(env.clock, env.enabledAt) // 关→开写入 enabledAt
         env.settings.setEnabled(true)
-        assertEquals(1, env.gapCalls.size) // 已开再开不重复通知
+        assertEquals(env.clock, env.enabledAt) // 已开再开不重写
+        env.clock += 60_000
         env.settings.setEnabled(false)
+        assertEquals(env.clock - 60_000, env.enabledAt) // 开→关不动，保持上次打开时刻
+        env.clock += 60_000
         env.settings.setEnabled(true)
-        assertEquals(2, env.gapCalls.size)
+        assertEquals(env.clock, env.enabledAt) // 再次关→开重写
         assertTrue(env.settings.enabled.value)
+        assertEquals(0L, FakeSettings(on = false).enabledAt) // 从未打开为 0
     }
 
     @Test fun defaultIsOff() {
@@ -206,7 +233,7 @@ class ScreenTimeSettingsTest {
         val settings = ScreenTimeSettings(
             readBoolean = { _, def -> def }, saveBoolean = { _, _ -> false },
             readLong = { _, def -> def }, saveLong = { _, _ -> true },
-            onReenabled = { error("提交失败不得通知") })
+            now = { error("提交失败不得写 enabledAt") })
         try { settings.setEnabled(true) } catch (_: IllegalStateException) {}
         assertFalse(settings.enabled.value) // 提交失败不发布状态
     }

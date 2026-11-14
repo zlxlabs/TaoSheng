@@ -35,10 +35,14 @@ class ScreenTimePuller(
             val startedAt = now()
             val state = dao.state(SCREEN_SOURCE)
             val horizon = at - HORIZON_MILLIS
-            val start = maxOf(dao.lastEventAt() ?: 0L, state?.coveredUntil ?: 0L, state?.floor ?: 0L, horizon)
+            val start = maxOf(dao.lastEventAt() ?: 0L, state?.coveredUntil ?: 0L, state?.floor ?: 0L, horizon, settings.enabledAt)
             // 停采超出系统保留期的部分已不可补回，先落缺口留痕。
             state?.coveredUntil?.takeIf { it < horizon }?.let {
                 dao.recordGap(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = "pull_failed"))
+            }
+            // 总开关关闭期间的区间不补采，落 disabled 缺口；提交后 coveredUntil 前进，下次不会重复写。
+            state?.coveredUntil?.takeIf { it < settings.enabledAt }?.let {
+                dao.recordGap(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = settings.enabledAt, code = "disabled"))
             }
             val raw = source.since(start, at)
             val events = raw.filter { it.type in SCREEN_EVENT_TYPES }
