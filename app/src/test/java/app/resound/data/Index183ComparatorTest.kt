@@ -24,6 +24,14 @@ class Index183ComparatorTest {
             val after = (1 until rows.size).first { rows[it] > index }
             rows.add(after, index)
         }
+        for (master in Index183FixtureDelta.tableMasterRows) {
+            val after = (1 until rows.size).first { rows[it] > master }
+            rows.add(after, master)
+        }
+        for (block in Index183FixtureDelta.tableBlocks) {
+            val at = rows.withIndex().first { it.value.startsWith("TABLE ") && it.value > block[0] }.index
+            rows.addAll(at, block)
+        }
         return rows.joinToString("\n")
     }
     private fun rejected(text: String) {
@@ -44,7 +52,7 @@ class Index183ComparatorTest {
     }
     @Test fun wrongMissingOrDuplicateVersionAndWrongIdentityFail() {
         val actual = allowed()
-        rejected(actual.replaceFirst("user_version=34", "user_version=35"))
+        rejected(actual.replaceFirst("user_version=35", "user_version=36"))
         rejected(actual.substringAfter('\n'))
         rejected("user_version=34\n$actual")
         val identity = Index183FixtureDelta.spec.getJSONObject("identity")

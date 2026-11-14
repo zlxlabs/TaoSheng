@@ -39,25 +39,25 @@
   ],
   "version": {
     "oldLine": "user_version=33",
-    "newLine": "user_version=34",
+    "newLine": "user_version=35",
     "occurrences": 1
   },
   "identity": {
     "table": "room_master_table",
     "columns": "columns=[\"id\",\"identity_hash\"]",
     "oldRow": "[{\"integer\":42},{\"text\":\"c8e25a89cb4bb9cf5903037158d9d8d3\"}]",
-    "newRow": "[{\"integer\":42},{\"text\":\"c8d36ea3efb4c4fce886d4a66543d917\"}]",
+    "newRow": "[{\"integer\":42},{\"text\":\"fe863c01282120a32fb7708de4818567\"}]",
     "occurrences": 1
   },
   "oldIdentityHash": "c8e25a89cb4bb9cf5903037158d9d8d3",
-  "newIdentityHash": "c8d36ea3efb4c4fce886d4a66543d917",
+  "newIdentityHash": "fe863c01282120a32fb7708de4818567",
   "oldSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
     "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8e25a89cb4bb9cf5903037158d9d8d3')"
   ],
   "newSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8d36ea3efb4c4fce886d4a66543d917')"
+    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fe863c01282120a32fb7708de4818567')"
   ],
   "indices": [
     {
@@ -90,6 +90,79 @@
         "orders": [],
         "createSql": "CREATE INDEX IF NOT EXISTS `index_transcript_lines_startAt` ON `${TABLE_NAME}` (`startAt`)"
       }
+    },
+    {
+      "name": "index_screen_events_at_pkg_type_cls",
+      "row": "[\"index\",\"index_screen_events_at_pkg_type_cls\",\"screen_events\",\"CREATE UNIQUE INDEX `index_screen_events_at_pkg_type_cls` ON `screen_events` (`at`, `pkg`, `type`, `cls`)\"]",
+      "occurrences": 1
+    },
+    {
+      "name": "index_screen_coverage_gaps_source_fromAt",
+      "row": "[\"index\",\"index_screen_coverage_gaps_source_fromAt\",\"screen_coverage_gaps\",\"CREATE INDEX `index_screen_coverage_gaps_source_fromAt` ON `screen_coverage_gaps` (`source`, `fromAt`)\"]",
+      "occurrences": 1
+    },
+    {
+      "name": "sqlite_autoindex_screen_app_names_1",
+      "row": "[\"index\",\"sqlite_autoindex_screen_app_names_1\",\"screen_app_names\",null]",
+      "occurrences": 1
+    },
+    {
+      "name": "sqlite_autoindex_screen_pull_state_1",
+      "row": "[\"index\",\"sqlite_autoindex_screen_pull_state_1\",\"screen_pull_state\",null]",
+      "occurrences": 1
+    }
+  ],
+  "tables": [
+    {
+      "name": "screen_app_names",
+      "masterRows": [
+        "[\"table\",\"screen_app_names\",\"screen_app_names\",\"CREATE TABLE `screen_app_names` (`pkg` TEXT NOT NULL PRIMARY KEY, `name` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL)\"]",
+        "[\"table\",\"screen_app_names\",\"screen_app_names\",\"CREATE TABLE `screen_app_names` (`pkg` TEXT NOT NULL, `name` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`pkg`))\"]"
+      ],
+      "block": [
+        "TABLE screen_app_names",
+        "columns=[\"pkg\",\"name\",\"updatedAt\"]",
+        ""
+      ],
+      "occurrences": 1
+    },
+    {
+      "name": "screen_coverage_gaps",
+      "masterRows": [
+        "[\"table\",\"screen_coverage_gaps\",\"screen_coverage_gaps\",\"CREATE TABLE `screen_coverage_gaps` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source` TEXT NOT NULL, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER NOT NULL, `code` TEXT NOT NULL)\"]"
+      ],
+      "block": [
+        "TABLE screen_coverage_gaps",
+        "columns=[\"id\",\"source\",\"fromAt\",\"untilAt\",\"code\"]",
+        ""
+      ],
+      "occurrences": 1
+    },
+    {
+      "name": "screen_events",
+      "masterRows": [
+        "[\"table\",\"screen_events\",\"screen_events\",\"CREATE TABLE `screen_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `pkg` TEXT NOT NULL, `cls` TEXT NOT NULL DEFAULT '', `type` INTEGER NOT NULL)\"]",
+        "[\"table\",\"screen_events\",\"screen_events\",\"CREATE TABLE `screen_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `pkg` TEXT NOT NULL, `cls` TEXT NOT NULL, `type` INTEGER NOT NULL)\"]"
+      ],
+      "block": [
+        "TABLE screen_events",
+        "columns=[\"id\",\"at\",\"pkg\",\"cls\",\"type\"]",
+        ""
+      ],
+      "occurrences": 1
+    },
+    {
+      "name": "screen_pull_state",
+      "masterRows": [
+        "[\"table\",\"screen_pull_state\",\"screen_pull_state\",\"CREATE TABLE `screen_pull_state` (`source` TEXT NOT NULL PRIMARY KEY, `coveredUntil` INTEGER, `floor` INTEGER NOT NULL DEFAULT 0)\"]",
+        "[\"table\",\"screen_pull_state\",\"screen_pull_state\",\"CREATE TABLE `screen_pull_state` (`source` TEXT NOT NULL, `coveredUntil` INTEGER, `floor` INTEGER NOT NULL, PRIMARY KEY(`source`))\"]"
+      ],
+      "block": [
+        "TABLE screen_pull_state",
+        "columns=[\"source\",\"coveredUntil\",\"floor\"]",
+        ""
+      ],
+      "occurrences": 1
     }
   ],
   "querySql": [
