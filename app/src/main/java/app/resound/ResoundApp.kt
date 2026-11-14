@@ -135,10 +135,12 @@ class ResoundApp : Application() {
             screenTimeSource, database.screenTime(),
             now = AppGraph.platform.now::now, denied = { it is SecurityException },
             diagnostic = { android.util.Log.i("screentime", it) })
-        // 卡 186c：查询仓储；桌面与系统 UI 不算「在用」的 App，桌面取 HOME intent 全部解析结果。
+        // 卡 186c：查询仓储；桌面与系统 UI 不算「在用」的 App。桌面只认 priority >= 0 的正规桌面——
+        // 系统设置的 FallbackHome 以 priority=-1000 兜底响应 HOME，按包名排除会连整个「设置」一起排掉（186d）。
         val launcherPkgs = packageManager.queryIntentActivities(
             android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME),
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            .filter { it.priority >= 0 }
             .mapNotNull { it.activityInfo?.packageName }.toSet() + "com.android.systemui"
         AppGraph.screenTimeReader = app.resound.screentime.ScreenTimeQueries(database.screenTime(),
             AppGraph.screenTimePuller, screenTimeSettings, permitted = screenTimeSource::permitted,
