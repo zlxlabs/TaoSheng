@@ -97,8 +97,9 @@ object ScreenTimeRules {
             .filter { it.from < it.until }
         ) {
             val idx = lastIndexByPkg[seg.pkg]
-            val prev = idx?.let { merged[it] }
-            // 同包上一段因切换收尾且间隔在抖动窗口内才合并；合并段继承最后一段的收尾原因。
+            // 同包上一段因切换收尾且间隔在抖动窗口内才合并；只在输出列表里紧邻（中间没有其他输出段）时进行，
+            // 否则「A、B、A」会把被 B 穿插的时间也算进 A，造成段重叠、重复计时。
+            val prev = idx?.takeIf { it == merged.size - 1 }?.let { merged[it] }
             if (prev != null && prev.reason == CloseReason.SWITCH && seg.from - prev.until <= config.mergeGapMillis) {
                 merged[idx] = prev.copy(until = seg.until, reason = seg.reason)
             } else {

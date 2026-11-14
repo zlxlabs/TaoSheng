@@ -65,7 +65,7 @@ private class Env(var on: Boolean = true) {
     var lastPull = 0L
     private val settings = ScreenTimeSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, v -> on = v; true },
-        readLong = { _, _ -> lastPull }, saveLong = { _, v -> lastPull = v; true })
+        readLong = { _, _ -> lastPull }, saveLong = { _, v -> lastPull = v; true }, now = { clock })
     fun queries(source: ScreenEventSource, dao: ScreenTimeDao, permitted: Boolean = true, excluded: Set<String> = emptySet()) =
         ScreenTimeQueries(dao, ScreenTimePuller(settings, source, dao, { clock }, { false }), settings, { permitted }, excluded, { clock })
 }
