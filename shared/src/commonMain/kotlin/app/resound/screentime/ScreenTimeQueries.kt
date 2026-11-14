@@ -22,6 +22,8 @@ class ScreenTimeQueries(
     private val settings: ScreenTimeSettings,
     /** 使用情况访问权限；只影响缺口的呈现，与拉取器内部判据同源，由装配层传同一实现。 */
     private val permitted: () -> Boolean,
+    /** 通知使用权；只影响 playback 缺口的呈现。已落库的播放行在没有授权时照常返回。 */
+    private val playbackPermitted: () -> Boolean,
     private val excluded: Set<String>,
     private val now: () -> Long,
     private val config: ScreenTimeConfig = ScreenTimeConfig(),
@@ -58,6 +60,17 @@ class ScreenTimeQueries(
                 gaps += CoverageGap(GapCode.PULL_FAILED, SCREEN_SOURCE, failFrom, failUntil, fixFor(GapCode.PULL_FAILED))
             }
         }
+        // ⑤ playback 落库缺口；until 裁到 min(untilAt, now())。播放查询不触发拉取。
+        val nowAt = now()
+        gaps += dao.gaps(PLAYBACK_SOURCE, from, until)
+            .map { CoverageGap(it.code, it.source, it.fromAt, minOf(it.untilAt, nowAt), fixFor(it.code)) }
+            .sortedBy { it.from }
+        if (!playbackPermitted()) {
+            gaps += CoverageGap(
+                GapCode.NOTIFICATION_ACCESS_MISSING, PLAYBACK_SOURCE, from, until,
+                fixFor(GapCode.NOTIFICATION_ACCESS_MISSING),
+            )
+        }
         val names = dao.names().associate { it.pkg to it.name }
         val events = dao.events(from - config.lookbackMillis, until).mapNotNull { row ->
             ScreenEventType.of(row.type)?.let { ScreenEvent(row.id, row.at, row.pkg, row.cls, it) }
@@ -71,7 +84,22 @@ class ScreenTimeQueries(
                     it.from, it.until,
                 )
             }
-        return ScreenTimeResult(enabled = true, sessions = sessions, coverageUntil = coveredUntil, gaps = gaps)
+        val devicePlayback = dao.playbacksOverlapping(from, until).mapNotNull { row ->
+            val start = maxOf(row.fromAt, from)
+            val end = minOf(row.untilAt ?: row.lastSeenAt, until)
+            if (end <= start) null
+            else DevicePlayback(
+                row.pkg,
+                ScreenTimeText.clean(row.name, config.titleMaxCodePoints),
+                row.title?.let { ScreenTimeText.clean(it, config.titleMaxCodePoints) },
+                row.subtitle?.let { ScreenTimeText.clean(it, config.titleMaxCodePoints) },
+                start, end,
+            )
+        }.sortedBy { it.from }
+        return ScreenTimeResult(
+            enabled = true, sessions = sessions, coverageUntil = coveredUntil, gaps = gaps,
+            devicePlayback = devicePlayback,
+        )
     }
 
     private companion object {

@@ -10,6 +10,7 @@ import kotlinx.datetime.*
 import kotlin.time.Instant
 
 import app.resound.context.SituationLookup
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.NamedAppSession
 
 /**
@@ -43,9 +44,13 @@ class SituationPrompt(private val enabled: Boolean, private val lookup: Situatio
             // 整批只查一次「在用」（整理时只算一次）；空批不查。
             val apps = if (lines.isEmpty()) emptyList()
             else lookup.appSessions(lines.minOf { it.startAt }, lines.maxOf { it.endAt })
+            val playbacks = if (lines.any { isPlaying(it.segmentId) })
+                lookup.devicePlayback(lines.minOf { it.startAt }, lines.maxOf { it.endAt })
+            else emptyList()
             for (group in groups(lines)) heading(
                 lines.subList(group.first, group.last + 1).minOf { it.startAt },
                 lines.subList(group.first, group.last + 1).maxOf { it.endAt }, lines[group.first].segmentId, apps,
+                playbacks,
             )?.let { headings[group.first] = it }
         }
         return DigestPrompt.transcript(lines, zone, unseparated, headings)
@@ -71,17 +76,31 @@ class SituationPrompt(private val enabled: Boolean, private val lookup: Situatio
         return ranges
     }
 
-    /** [segmentId] 为 null（合并路径）时不出外放与「在用」项。[apps] 是整批一次查询到的前台使用段。 */
-    private suspend fun heading(start: Long, end: Long, segmentId: Long?, apps: List<NamedAppSession> = emptyList()): String? {
+    /** [segmentId] 为 null（合并路径）时不出外放与「在用」项。[apps] / [playbacks] 是整批一次查询到的前台使用段和播放记录。 */
+    private suspend fun heading(
+        start: Long, end: Long, segmentId: Long?,
+        apps: List<NamedAppSession> = emptyList(),
+        playbacks: List<DevicePlayback> = emptyList(),
+    ): String? {
         val source = lookup ?: return null
         // 「在用」只对手机麦克风片段（playback Map 的键）出；取与片段起止重叠最长的一个 App。
         val inUse = if (segmentId != null && segmentId in playback) longestApp(apps, start, end) else null
         if (inUse != null) inUseSeen = true
+        val playbackItem = if (segmentId != null && isPlaying(segmentId)) {
+            val match = longestPlayback(playbacks, start, end)
+            when {
+                match != null && match.title != null ->
+                    "外放：可能是 ${singleLine(match.name)}《${singleLine(match.title)}》"
+                match != null -> "外放：可能是 ${singleLine(match.name)}"
+                inUse != null -> "外放：可能是 ${singleLine(inUse.name)}"
+                else -> "外放：来源未知"
+            }
+        } else null
         val parts = listOfNotNull(
             source.placeDuring(start, end)?.name?.takeIf { it.isNotBlank() }?.let { "当时在：${singleLine(it)}" },
             source.envDuring(start, end).takeIf { it.isNotEmpty() }?.let { "周围：${it.joinToString("、", transform = ::singleLine)}" },
             inUse?.let { "在用：${singleLine(it.name)}" },
-            if (segmentId != null && isPlaying(segmentId)) "外放：来源未知" else null,
+            playbackItem,
         )
         return parts.takeIf { it.isNotEmpty() }?.joinToString("｜", prefix = "【", postfix = "】")
     }
@@ -93,6 +112,17 @@ class SituationPrompt(private val enabled: Boolean, private val lookup: Situatio
         for (s in sessions) {
             val overlap = minOf(s.until, end) - maxOf(s.from, start)
             if (overlap > longest) { best = s; longest = overlap }
+        }
+        return best
+    }
+
+    /** 与 [start, end) 重叠最长的播放记录；零重叠不出。同时长先到先得。 */
+    private fun longestPlayback(records: List<DevicePlayback>, start: Long, end: Long): DevicePlayback? {
+        var best: DevicePlayback? = null
+        var longest = 0L
+        for (p in records) {
+            val overlap = minOf(p.until, end) - maxOf(p.from, start)
+            if (overlap > longest) { best = p; longest = overlap }
         }
         return best
     }

@@ -6,6 +6,7 @@ import app.resound.context.SituationStore
 import app.resound.data.MemoryEventEntity
 import app.resound.data.TranscriptLineEntity
 import app.resound.envsound.EnvSoundRow
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.NamedAppSession
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -130,8 +131,10 @@ class SituationPrompt130Test {
     private class CountingLookup(
         private val home: Boolean = false,
         private val sessions: List<NamedAppSession> = emptyList(),
+        private val playbacks: List<DevicePlayback> = emptyList(),
     ) : SituationLookup {
         val calls = mutableListOf<Pair<Long, Long>>()
+        val playbackCalls = mutableListOf<Pair<Long, Long>>()
         override suspend fun placeDuring(start: Long, end: Long): PlaceAt? =
             if (home) PlaceAt("家", true, start, end) else null
         override suspend fun envDuring(start: Long, end: Long, limit: Int) = emptyList<String>()
@@ -140,19 +143,24 @@ class SituationPrompt130Test {
             calls += from to until
             return sessions
         }
+        override suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> {
+            playbackCalls += from to until
+            return playbacks
+        }
     }
 
-    /** 必测 1：mic 片段逐字出「当时在：家｜在用：微信｜外放：来源未知」；非 mic 片段无「在用」；整批只查一次。 */
+    /** 卡 186c：mic 片段出「在用」；有外放、无播放记录时外放归属落到在用 App（卡 190c）。整批 appSessions / devicePlayback 各查一次。 */
     @Test fun inUseItemAppearsForMicSegmentsAndQueriesOncePerBatch() = runBlocking {
         val lookup = CountingLookup(home = true,
             sessions = listOf(NamedAppSession("com.tencent.mm", "微信", 0, 6000)))
         val prompt = SituationPrompt(true, lookup, mapOf(1L to 5000L, 2L to 0L))
         val (text, _) = prompt.transcript(lines, zone = zone)
         assertEquals(
-            listOf("【当时在：家｜在用：微信｜外放：来源未知】", "【当时在：家｜在用：微信】", "【当时在：家】"),
+            listOf("【当时在：家｜在用：微信｜外放：可能是 微信】", "【当时在：家｜在用：微信】", "【当时在：家】"),
             text.lines().filter { it.startsWith("【") },
         )
         assertEquals(listOf(0L to 6000L), lookup.calls) // 批内最早 0、最晚 6000，恰好一次
+        assertEquals(listOf(0L to 6000L), lookup.playbackCalls)
     }
 
     /** 必测 2：片段同时跨微信 1 分钟、抖音 3 分钟，取重叠最长的抖音。 */
@@ -162,7 +170,7 @@ class SituationPrompt130Test {
             NamedAppSession("com.ss.android.ugc.aweme", "抖音", 60_000, 240_000)))
         val longLine = listOf(TranscriptLineEntity(1, 1, 0, 240_000, "一句长话", null))
         val (text, _) = SituationPrompt(true, lookup, mapOf(1L to 5000L)).transcript(longLine, zone = zone)
-        assertEquals(listOf("【在用：抖音｜外放：来源未知】"), text.lines().filter { it.startsWith("【") })
+        assertEquals(listOf("【在用：抖音｜外放：可能是 抖音】"), text.lines().filter { it.startsWith("【") })
         assertEquals(listOf(0L to 240_000L), lookup.calls)
     }
 
@@ -215,7 +223,54 @@ class SituationPrompt130Test {
             appSessions = { _, _ -> calls++; listOf(NamedAppSession("com.tencent.mm", "微信", 0, 6000)) },
         )
         val (text, _) = SituationPrompt(true, store, mapOf(1L to 5000L, 2L to 0L)).transcript(lines, zone = zone)
-        assertEquals(listOf("【在用：微信｜外放：来源未知】", "【在用：微信】", "【周围：雨】"), text.lines().filter { it.startsWith("【") })
+        assertEquals(listOf("【在用：微信｜外放：可能是 微信】", "【在用：微信】", "【周围：雨】"), text.lines().filter { it.startsWith("【") })
         assertEquals(1, calls)
+    }
+
+    // ---------- 卡 190c：外放三档归属 ----------
+
+    private val oneLine = listOf(TranscriptLineEntity(1, 1, 0, 10_000, "一句", null))
+    private val playing = mapOf(1L to 5_000L)
+
+    /** 必测 1：四种字面，每种断言完整情境行。 */
+    @Test fun playbackAttributionFourLiterals() = runBlocking {
+        val titled = CountingLookup(playbacks = listOf(
+            DevicePlayback("app.podcast.cosmos", "小宇宙", "某集", null, 0, 10_000)))
+        val (titledText, _) = SituationPrompt(true, titled, playing).transcript(oneLine, zone = zone)
+        assertEquals(listOf("【外放：可能是 小宇宙《某集》】"), titledText.lines().filter { it.startsWith("【") })
+        assertEquals(listOf(0L to 10_000L), titled.playbackCalls)
+
+        val untitled = CountingLookup(playbacks = listOf(
+            DevicePlayback("app.podcast.cosmos", "小宇宙", null, null, 0, 10_000)))
+        val (untitledText, _) = SituationPrompt(true, untitled, playing).transcript(oneLine, zone = zone)
+        assertEquals(listOf("【外放：可能是 小宇宙】"), untitledText.lines().filter { it.startsWith("【") })
+
+        val inUseOnly = CountingLookup(sessions = listOf(NamedAppSession("com.tencent.mm", "微信", 0, 10_000)))
+        val (inUseText, _) = SituationPrompt(true, inUseOnly, playing).transcript(oneLine, zone = zone)
+        assertEquals(listOf("【在用：微信｜外放：可能是 微信】"), inUseText.lines().filter { it.startsWith("【") })
+
+        val neither = CountingLookup()
+        val (neitherText, _) = SituationPrompt(true, neither, playing).transcript(oneLine, zone = zone)
+        assertEquals(listOf("【外放：来源未知】"), neitherText.lines().filter { it.startsWith("【") })
+    }
+
+    /** 必测 2：两条播放记录取与片段重叠最长的一条（同时长先到先得由 longest 的 > 保证）。 */
+    @Test fun longestOverlappingPlaybackWins() = runBlocking {
+        val lookup = CountingLookup(playbacks = listOf(
+            DevicePlayback("a.short", "短节目", "A", null, 0, 10_000),
+            DevicePlayback("a.long", "长节目", "B", null, 0, 80_000),
+        ))
+        val longLine = listOf(TranscriptLineEntity(1, 1, 0, 100_000, "一句长话", null))
+        val (text, _) = SituationPrompt(true, lookup, mapOf(1L to 5_000L)).transcript(longLine, zone = zone)
+        assertEquals(listOf("【外放：可能是 长节目《B》】"), text.lines().filter { it.startsWith("【") })
+        assertEquals(listOf(0L to 100_000L), lookup.playbackCalls)
+    }
+
+    /** 必测 3：本批没有外放片段时不调用 devicePlayback。基线上 heading 从不调用，本测试在基线恒绿，锁的是实现后仍不查。 */
+    @Test fun skipsDevicePlaybackQueryWhenBatchHasNoPlayingSegment() = runBlocking {
+        val lookup = CountingLookup(sessions = listOf(NamedAppSession("com.tencent.mm", "微信", 0, 6000)))
+        SituationPrompt(true, lookup, emptyMap()).transcript(lines, zone = zone)
+        SituationPrompt(true, lookup, mapOf(1L to 0L, 3L to 2999L)).transcript(lines, zone = zone)
+        assertEquals(emptyList<Pair<Long, Long>>(), lookup.playbackCalls)
     }
 }

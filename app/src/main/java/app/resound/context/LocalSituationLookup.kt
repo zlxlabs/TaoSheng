@@ -21,8 +21,9 @@ class LocalSituationLookup internal constructor(
     zone: () -> ZoneId, io: kotlinx.coroutines.CoroutineDispatcher,
     pointBounds: suspend () -> Pair<Long, Long>? = { null },
     appSessions: suspend (Long, Long) -> List<app.resound.screentime.NamedAppSession> = { _, _ -> emptyList() },
+    devicePlayback: suspend (Long, Long) -> List<app.resound.screentime.DevicePlayback> = { _, _ -> emptyList() },
 ) : SituationLookup by SituationStore(available, points, cachedPlace, sounds, placeRevision, soundRevision,
-    app.resound.platform.ZoneProvider { zone().id }, io, { it is SecurityException }, Math::toRadians, pointBounds, appSessions) {
+    app.resound.platform.ZoneProvider { zone().id }, io, { it is SecurityException }, Math::toRadians, pointBounds, appSessions, devicePlayback) {
     companion object {
         fun create(database: CaptureDatabase, location: LocationRepository, scope: CoroutineScope, zone: app.resound.platform.ZoneProvider, io: kotlinx.coroutines.CoroutineDispatcher): LocalSituationLookup {
             val places = AtomicLong()
@@ -41,7 +42,8 @@ class LocalSituationLookup internal constructor(
                     }
                 },
                 // 卡 186c：在用项数据源；reader 未装配或开关关闭时返回空，接口默认实现同样兜底。
-                appSessions = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty() })
+                appSessions = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty() },
+                devicePlayback = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.devicePlayback.orEmpty() })
         }
 
     }

@@ -52,7 +52,7 @@ class Index183ComparatorTest {
     }
     @Test fun wrongMissingOrDuplicateVersionAndWrongIdentityFail() {
         val actual = allowed()
-        rejected(actual.replaceFirst("user_version=35", "user_version=36"))
+        rejected(actual.replaceFirst("user_version=${CaptureDatabase.VERSION}", "user_version=${CaptureDatabase.VERSION + 1}"))
         rejected(actual.substringAfter('\n'))
         rejected("user_version=34\n$actual")
         val identity = Index183FixtureDelta.spec.getJSONObject("identity")

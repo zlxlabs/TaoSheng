@@ -39,25 +39,25 @@
   ],
   "version": {
     "oldLine": "user_version=33",
-    "newLine": "user_version=35",
+    "newLine": "user_version=36",
     "occurrences": 1
   },
   "identity": {
     "table": "room_master_table",
     "columns": "columns=[\"id\",\"identity_hash\"]",
     "oldRow": "[{\"integer\":42},{\"text\":\"c8e25a89cb4bb9cf5903037158d9d8d3\"}]",
-    "newRow": "[{\"integer\":42},{\"text\":\"fe863c01282120a32fb7708de4818567\"}]",
+    "newRow": "[{\"integer\":42},{\"text\":\"4324ee42f6c776d1a0ad6e36590e98fc\"}]",
     "occurrences": 1
   },
   "oldIdentityHash": "c8e25a89cb4bb9cf5903037158d9d8d3",
-  "newIdentityHash": "fe863c01282120a32fb7708de4818567",
+  "newIdentityHash": "4324ee42f6c776d1a0ad6e36590e98fc",
   "oldSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
     "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8e25a89cb4bb9cf5903037158d9d8d3')"
   ],
   "newSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fe863c01282120a32fb7708de4818567')"
+    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4324ee42f6c776d1a0ad6e36590e98fc')"
   ],
   "indices": [
     {
@@ -110,6 +110,16 @@
       "name": "sqlite_autoindex_screen_pull_state_1",
       "row": "[\"index\",\"sqlite_autoindex_screen_pull_state_1\",\"screen_pull_state\",null]",
       "occurrences": 1
+    },
+    {
+      "name": "index_playback_rows_fromAt",
+      "row": "[\"index\",\"index_playback_rows_fromAt\",\"playback_rows\",\"CREATE INDEX `index_playback_rows_fromAt` ON `playback_rows` (`fromAt`)\"]",
+      "occurrences": 1
+    },
+    {
+      "name": "index_playback_rows_sessionKey",
+      "row": "[\"index\",\"index_playback_rows_sessionKey\",\"playback_rows\",\"CREATE INDEX `index_playback_rows_sessionKey` ON `playback_rows` (`sessionKey`)\"]",
+      "occurrences": 1
     }
   ],
   "tables": [
@@ -160,6 +170,18 @@
       "block": [
         "TABLE screen_pull_state",
         "columns=[\"source\",\"coveredUntil\",\"floor\"]",
+        ""
+      ],
+      "occurrences": 1
+    },
+    {
+      "name": "playback_rows",
+      "masterRows": [
+        "[\"table\",\"playback_rows\",\"playback_rows\",\"CREATE TABLE `playback_rows` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionKey` TEXT NOT NULL, `pkg` TEXT NOT NULL, `name` TEXT NOT NULL, `title` TEXT, `subtitle` TEXT, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER, `lastSeenAt` INTEGER NOT NULL)\"]"
+      ],
+      "block": [
+        "TABLE playback_rows",
+        "columns=[\"id\",\"sessionKey\",\"pkg\",\"name\",\"title\",\"subtitle\",\"fromAt\",\"untilAt\",\"lastSeenAt\"]",
         ""
       ],
       "occurrences": 1
