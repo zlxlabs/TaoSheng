@@ -22,7 +22,10 @@ class AskParity153Test {
         override suspend fun findThings(args: String, sources: MutableList<AskSource>) = error("不应调用寻物")
     },sample("spec.json"),zone)
 
-    @Test fun definitionsMatchRecordedBytes() { assertEquals(sample("definitions.json"),AskDefinitions.json()) }
+    @Test fun definitionsMatchRecordedBytes() {
+        val expected = Arr(sample("definitions.json")).put(Obj("""{"type":"function","function":{"name":"apps_during","description":"查某段时间手机上用了哪些 App、各用多久；只有开启屏幕时间时才有数据","parameters":{"type":"object","properties":{"from":{"type":"string","description":"YYYY-MM-DD 或 YYYY-MM-DD HH:mm"},"to":{"type":"string","description":"YYYY-MM-DD 或 YYYY-MM-DD HH:mm"}},"required":["from","to"],"additionalProperties":false}}}"""))
+        assertEquals(expected.toString(), AskDefinitions.json())
+    }
     @Test fun fullSystemPromptMatchesRecordedBytes() {
         assertEquals(sample("prompt.txt"),app.resound.digest.core.DigestPrompt.system(sample("template.md"),LocalDate(2026,11,10),"涛声").replace("{{TODAY}}","2026-11-10"))
     }
