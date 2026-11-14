@@ -36,6 +36,11 @@ private class QDao : ScreenTimeDao {
     }
     override suspend fun updatePlayback(row: PlaybackRow) { playbacks.replaceAll { if (it.id == row.id) row else it } }
     override suspend fun openPlaybacks() = playbacks.filter { it.untilAt == null }
+    override suspend fun closeOpenPlaybacksBefore(enabledAt: Long) {
+        playbacks.replaceAll {
+            if (it.untilAt == null && it.lastSeenAt < enabledAt) it.copy(untilAt = it.lastSeenAt) else it
+        }
+    }
     override suspend fun playbacksOverlapping(from: Long, until: Long) =
         playbacks.filter { it.fromAt < until && (it.untilAt ?: it.lastSeenAt) > from }.sortedWith(compareBy({ it.fromAt }, { it.id }))
     override suspend fun openEndedGaps(source: String, openUntil: Long) = gaps.filter { it.source == source && it.untilAt == openUntil }
@@ -82,6 +87,7 @@ private class StrictDao : ScreenTimeDao {
     override suspend fun insertPlayback(row: PlaybackRow): Long = die()
     override suspend fun updatePlayback(row: PlaybackRow) = die()
     override suspend fun openPlaybacks(): List<PlaybackRow> = die()
+    override suspend fun closeOpenPlaybacksBefore(enabledAt: Long) = die()
     override suspend fun playbacksOverlapping(from: Long, until: Long): List<PlaybackRow> = die()
     override suspend fun openEndedGaps(source: String, openUntil: Long): List<ScreenCoverageGapRow> = die()
     override suspend fun closeGap(id: Long, untilAt: Long) = die()

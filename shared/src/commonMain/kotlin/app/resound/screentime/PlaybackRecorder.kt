@@ -18,6 +18,7 @@ class PlaybackRecorder(
     override suspend fun changed(sessionKey: String, pkg: String, title: String?, subtitle: String?, playing: Boolean, at: Long) {
         gate.withLock {
             if (!settings.enabled.value) return@withLock
+            dao.closeOpenPlaybacksBefore(settings.enabledAt)
             val cleanTitle = blankToNull(title)
             val cleanSubtitle = blankToNull(subtitle)
             val open = dao.openPlayback(sessionKey)
@@ -41,6 +42,7 @@ class PlaybackRecorder(
     override suspend fun heartbeat(sessionKey: String, at: Long) {
         gate.withLock {
             if (!settings.enabled.value) return@withLock
+            dao.closeOpenPlaybacksBefore(settings.enabledAt)
             val open = dao.openPlayback(sessionKey) ?: return@withLock
             dao.updatePlayback(open.copy(lastSeenAt = maxOf(open.lastSeenAt, at)))
         }
@@ -49,6 +51,7 @@ class PlaybackRecorder(
     override suspend fun disconnected(at: Long) {
         gate.withLock {
             if (!settings.enabled.value) return@withLock
+            dao.closeOpenPlaybacksBefore(settings.enabledAt)
             dao.closeOpenPlaybacksAtLastSeen()
             dao.recordGap(
                 ScreenCoverageGapRow(
@@ -62,6 +65,7 @@ class PlaybackRecorder(
     override suspend fun connected(at: Long) {
         gate.withLock {
             if (!settings.enabled.value) return@withLock
+            dao.closeOpenPlaybacksBefore(settings.enabledAt)
             val closed = dao.closePlaybackDisconnectGaps(at)
             if (closed == 0) {
                 val open = dao.openPlaybacks()

@@ -32,6 +32,7 @@ private class FakeDao : ScreenTimeDao {
     override suspend fun insertPlayback(row: PlaybackRow) = 0L
     override suspend fun updatePlayback(row: PlaybackRow) {}
     override suspend fun openPlaybacks() = emptyList<PlaybackRow>()
+    override suspend fun closeOpenPlaybacksBefore(enabledAt: Long) {}
     override suspend fun playbacksOverlapping(from: Long, until: Long) = emptyList<PlaybackRow>()
     override suspend fun openEndedGaps(source: String, openUntil: Long) = emptyList<ScreenCoverageGapRow>()
     override suspend fun closeGap(id: Long, untilAt: Long) {}

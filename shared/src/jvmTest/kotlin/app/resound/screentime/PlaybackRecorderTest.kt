@@ -34,6 +34,11 @@ private class RecDao : ScreenTimeDao {
     }
     override suspend fun updatePlayback(row: PlaybackRow) { playbacks.replaceAll { if (it.id == row.id) row else it } }
     override suspend fun openPlaybacks() = playbacks.filter { it.untilAt == null }
+    override suspend fun closeOpenPlaybacksBefore(enabledAt: Long) {
+        playbacks.replaceAll {
+            if (it.untilAt == null && it.lastSeenAt < enabledAt) it.copy(untilAt = it.lastSeenAt) else it
+        }
+    }
     override suspend fun playbacksOverlapping(from: Long, until: Long) =
         playbacks.filter { it.fromAt < until && (it.untilAt ?: it.lastSeenAt) > from }.sortedWith(compareBy({ it.fromAt }, { it.id }))
     override suspend fun openEndedGaps(source: String, openUntil: Long) = gaps.filter { it.source == source && it.untilAt == openUntil }
@@ -56,10 +61,25 @@ private class RecDao : ScreenTimeDao {
 }
 
 private class RecEnv(var on: Boolean = true) {
+    var clock = T
+    var enabledAt = 0L
+    var disabledAt = 0L
     val dao = RecDao()
     val settings = ScreenTimeSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, v -> on = v; true },
-        readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { T },
+        readLong = { key, def -> when (key) {
+            ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt
+            ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt
+            else -> def
+        } },
+        saveLong = { key, value ->
+            when (key) {
+                ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt = value
+                ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt = value
+            }
+            true
+        },
+        now = { clock },
     )
     val names = mutableMapOf<String, String>()
     val recorder = PlaybackRecorder(dao, settings, { pkgs -> names.filterKeys { it in pkgs } })
@@ -133,6 +153,24 @@ class PlaybackRecorderTest {
         env.recorder.disconnected(T + 2)
         env.recorder.connected(T + 3)
         assertTrue(env.dao.playbacks.isEmpty())
+        assertTrue(env.dao.gaps.isEmpty())
+    }
+
+    /** 总开关关闭期间不续接：重新开启后同一 key 的 changed 开新行，旧行收尾在上次 lastSeenAt。 */
+    @Test fun reenableClosesStaleOpenRowAndStartsNew() = runBlocking {
+        val env = RecEnv()
+        val t1 = T
+        val t3 = T + 3_000
+        val t4 = T + 4_000
+        env.recorder.changed("k", "pkg.a", "A", null, true, t1)
+        env.settings.setEnabled(false)
+        env.clock = t3
+        env.settings.setEnabled(true)
+        env.recorder.changed("k", "pkg.a", "A", null, true, t4)
+        assertEquals(2, env.dao.playbacks.size)
+        assertEquals(t1, env.dao.playbacks[0].untilAt)
+        assertEquals(t4, env.dao.playbacks[1].fromAt)
+        assertEquals(null, env.dao.playbacks[1].untilAt)
         assertTrue(env.dao.gaps.isEmpty())
     }
 }
