@@ -35,21 +35,37 @@ class ScreenTimePuller(
             val startedAt = now()
             val state = dao.state(SCREEN_SOURCE)
             val horizon = at - HORIZON_MILLIS
-            val start = maxOf(dao.lastEventAt() ?: 0L, state?.coveredUntil ?: 0L, state?.floor ?: 0L, horizon, settings.enabledAt)
-            // 停采超出系统保留期的部分已不可补回，先落缺口留痕。
-            state?.coveredUntil?.takeIf { it < horizon }?.let {
-                dao.recordGap(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = "pull_failed"))
+            val covered = state?.coveredUntil ?: 0L
+            // 关闭时刻未知（186c 升级用户）且上次覆盖早于本次打开：沿用旧口径把关闭前整段当关闭期间，起点圈到 enabledAt。
+            val legacyDisabled = state != null && covered < settings.enabledAt && settings.disabledAt == 0L
+            // 从未提交过时不补采历史；已提交过则起点不再受 enabledAt 约束，关闭前仍开着的使用照常补拉（186d）。
+            val start = when {
+                state == null -> maxOf(dao.lastEventAt() ?: 0L, horizon, settings.enabledAt)
+                legacyDisabled -> maxOf(dao.lastEventAt() ?: 0L, covered, state.floor, horizon, settings.enabledAt)
+                else -> maxOf(dao.lastEventAt() ?: 0L, covered, state.floor, horizon)
             }
-            // 总开关关闭期间的区间不补采，落 disabled 缺口；提交后 coveredUntil 前进，下次不会重复写。
-            state?.coveredUntil?.takeIf { it < settings.enabledAt }?.let {
-                dao.recordGap(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = settings.enabledAt, code = "disabled"))
+            // 缺口随本次事务一起落库：事件源抛错时与覆盖指针一起回滚，下次拉取不会重复写（186d）。
+            val gaps = buildList {
+                state?.coveredUntil?.takeIf { it < horizon }?.let {
+                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = "pull_failed"))
+                }
+                if (state != null && covered < settings.enabledAt && settings.disabledAt > 0) {
+                    // 有关闭时刻：缺口从「上次采集」与「关闭时刻」的较大者起算，关闭前仍开着的使用照常入库。
+                    val offFrom = maxOf(covered, settings.disabledAt)
+                    if (offFrom < settings.enabledAt)
+                        add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = offFrom, untilAt = settings.enabledAt, code = "disabled"))
+                } else if (legacyDisabled) {
+                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = covered, untilAt = settings.enabledAt, code = "disabled"))
+                }
             }
             val raw = source.since(start, at)
             val events = raw.filter { it.type in SCREEN_EVENT_TYPES }
                 .map { ScreenEventRow(at = it.at, pkg = it.pkg, cls = it.cls ?: "", type = it.type) }
+                // 关闭期间系统残留的使用事件不入库（缺口已留痕）。
+                .filter { row -> gaps.none { it.code == "disabled" && row.at in it.fromAt until it.untilAt } }
             val names = if (events.isEmpty()) emptyList() else
                 source.appNames(events.map { it.pkg }.toSet()).map { (pkg, name) -> ScreenAppNameRow(pkg, name, at) }
-            dao.commitPull(events, names, at)
+            dao.commitPull(events, names, at, gaps)
             settings.markPulled(at)
             diagnostic("screentime: pulled ${events.size} events (${raw.size} raw) in ${now() - startedAt}ms")
             PullResult.Pulled(events.size)

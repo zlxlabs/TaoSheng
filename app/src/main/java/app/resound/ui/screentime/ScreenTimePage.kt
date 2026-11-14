@@ -19,11 +19,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.resound.R
 import app.resound.capture.MicHolderGuess
 import app.resound.screentime.ScreenTimeSettings
 import app.resound.ui.skills.Toggle
@@ -58,7 +60,7 @@ fun ScreenTimePage(settings: ScreenTimeSettings, bottom: Dp) {
                     Text("记录屏幕时间", style = RsType.headline, color = c.text)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "打开后，回响每小时从系统读取 App 使用记录，用来回答“那段时间在用什么”、生成每日屏幕时间，并在整理时标注当时在用的 App。关闭后不再采集，已记录的数据保留但不会被问问、推送或整理用到；要删除请用隐私删除。",
+                        "打开后，" + stringResource(R.string.app_name) + "每小时从系统读取 App 使用记录，用来回答“那段时间在用什么”、生成每日屏幕时间，并在整理时标注当时在用的 App。关闭后不再采集，已记录的数据保留但不会被问问、推送或整理用到；要删除请用隐私删除。",
                         style = RsType.subhead,
                         color = c.textSecondary,
                     )
