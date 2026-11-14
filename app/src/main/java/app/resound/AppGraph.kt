@@ -87,6 +87,11 @@ object AppGraph {
     val isSituationReady: Boolean get() = ::situation.isInitialized
     val isLocationReady: Boolean get() = ::location.isInitialized
 
+    /** 卡 185b：屏幕时间采集底座（默认关；开关与拉取器查询前共用同一 Mutex） */
+    lateinit var screenTimeSettings: app.resound.screentime.ScreenTimeSettings
+    lateinit var screenTimePuller: app.resound.screentime.ScreenTimePuller
+    val isScreenTimeReady: Boolean get() = ::screenTimePuller.isInitialized
+
     // 卡 079：寻物
     lateinit var things: app.resound.things.ThingRepository
     val isThingsReady: Boolean get() = ::things.isInitialized
