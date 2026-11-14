@@ -26,6 +26,8 @@ internal object DayVolumeRows {
         "location_points" to "at",
         // 卡 185b：屏幕时间原始事件按天分卷
         "screen_events" to "at",
+        // 卡 190a：设备播放记录按开始时刻分卷
+        "playback_rows" to "fromAt",
     )
     val global = setOf("import_fingerprints", "folder_observations", "device_transfers", "things", "thing_watch_state", "voiceprint_people", "voiceprint_samples", "voiceprint_exclusions", "location_places",
         // 卡 185b：屏幕时间全局表；覆盖指针与缺口不随天卷走

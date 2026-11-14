@@ -23,6 +23,11 @@ data class ScreenPullStateRow(@PrimaryKey val source: String, val coveredUntil: 
 data class ScreenCoverageGapRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val source: String,
     val fromAt: Long, val untilAt: Long, val code: String)
 
+/** 设备播放记录一行；untilAt 在播放中为 null。name 是写入时的 App 名快照，查不到时等于 pkg。不存「是否外放」。 */
+@Entity(tableName = "playback_rows", indices = [Index("fromAt"), Index("sessionKey")])
+data class PlaybackRow(@PrimaryKey(autoGenerate = true) val id: Long = 0, val sessionKey: String, val pkg: String,
+    val name: String, val title: String?, val subtitle: String?, val fromAt: Long, val untilAt: Long?, val lastSeenAt: Long)
+
 /** 平台上抛的原始事件；cls 可空由拉取器统一转空串。 */
 data class RawScreenEvent(val at: Long, val pkg: String, val cls: String?, val type: Int)
 

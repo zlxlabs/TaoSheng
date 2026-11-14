@@ -15,6 +15,8 @@ private class QDao : ScreenTimeDao {
     val names = mutableMapOf<String, ScreenAppNameRow>()
     val states = mutableMapOf<String, ScreenPullStateRow>()
     val gaps = mutableListOf<ScreenCoverageGapRow>()
+    val playbacks = mutableListOf<PlaybackRow>()
+    private var nextPlaybackId = 1L
     override suspend fun events(from: Long, until: Long) = rows.filter { it.at >= from && it.at < until }.sortedWith(compareBy({ it.at }, { it.id }))
     override suspend fun names() = names.values.sortedBy { it.pkg }
     override suspend fun state(source: String) = states[source]
@@ -24,9 +26,35 @@ private class QDao : ScreenTimeDao {
     override suspend fun insertStateRow(row: ScreenPullStateRow) = if (states.containsKey(row.source)) -1L else { states[row.source] = row; 1L }
     override suspend fun updateCoveredUntil(source: String, value: Long) { states[source]?.let { states[source] = it.copy(coveredUntil = maxOf(it.coveredUntil ?: 0L, value)) } }
     override suspend fun raiseFloor(source: String, value: Long) { states[source]?.let { states[source] = it.copy(floor = maxOf(it.floor, value)) } }
-    override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap }
+    override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap.copy(id = if (gap.id == 0L) gaps.size + 1L else gap.id) }
     override suspend fun deleteEvents(from: Long, until: Long) { rows.removeAll { it.at >= from && it.at < until } }
     override suspend fun lastEventAt() = rows.maxOfOrNull { it.at }
+    override suspend fun openPlayback(sessionKey: String) = playbacks.firstOrNull { it.sessionKey == sessionKey && it.untilAt == null }
+    override suspend fun insertPlayback(row: PlaybackRow): Long {
+        val id = if (row.id == 0L) nextPlaybackId++ else row.id
+        playbacks += row.copy(id = id); return id
+    }
+    override suspend fun updatePlayback(row: PlaybackRow) { playbacks.replaceAll { if (it.id == row.id) row else it } }
+    override suspend fun openPlaybacks() = playbacks.filter { it.untilAt == null }
+    override suspend fun playbacksOverlapping(from: Long, until: Long) =
+        playbacks.filter { it.fromAt < until && (it.untilAt ?: it.lastSeenAt) > from }.sortedWith(compareBy({ it.fromAt }, { it.id }))
+    override suspend fun openEndedGaps(source: String, openUntil: Long) = gaps.filter { it.source == source && it.untilAt == openUntil }
+    override suspend fun closeGap(id: Long, untilAt: Long) { gaps.replaceAll { if (it.id == id) it.copy(untilAt = untilAt) else it } }
+    override suspend fun deletePlaybackInside(from: Long, until: Long) {
+        playbacks.removeAll { it.fromAt >= from && (it.untilAt ?: it.lastSeenAt) <= until }
+    }
+    override suspend fun truncatePlaybackLeft(from: Long) {
+        playbacks.replaceAll {
+            val end = it.untilAt ?: it.lastSeenAt
+            if (it.fromAt < from && end > from) it.copy(untilAt = from, lastSeenAt = minOf(it.lastSeenAt, from)) else it
+        }
+    }
+    override suspend fun truncatePlaybackRight(from: Long, until: Long) {
+        playbacks.replaceAll {
+            val end = it.untilAt ?: it.lastSeenAt
+            if (it.fromAt >= from && it.fromAt < until && end > until) it.copy(fromAt = until) else it
+        }
+    }
 }
 
 /** 断言被调用即失败的严格事件源与假库；验证总开关关闭时两者都不被碰。 */
@@ -50,6 +78,16 @@ private class StrictDao : ScreenTimeDao {
     override suspend fun recordGap(gap: ScreenCoverageGapRow) = die()
     override suspend fun deleteEvents(from: Long, until: Long) = die()
     override suspend fun lastEventAt(): Long? = die()
+    override suspend fun openPlayback(sessionKey: String): PlaybackRow? = die()
+    override suspend fun insertPlayback(row: PlaybackRow): Long = die()
+    override suspend fun updatePlayback(row: PlaybackRow) = die()
+    override suspend fun openPlaybacks(): List<PlaybackRow> = die()
+    override suspend fun playbacksOverlapping(from: Long, until: Long): List<PlaybackRow> = die()
+    override suspend fun openEndedGaps(source: String, openUntil: Long): List<ScreenCoverageGapRow> = die()
+    override suspend fun closeGap(id: Long, untilAt: Long) = die()
+    override suspend fun deletePlaybackInside(from: Long, until: Long) = die()
+    override suspend fun truncatePlaybackLeft(from: Long) = die()
+    override suspend fun truncatePlaybackRight(from: Long, until: Long) = die()
 }
 
 /** 可控授权的空事件源；查询前拉取走真路径（授权缺失或抛错时不动数据库）。 */
@@ -66,8 +104,10 @@ private class Env(var on: Boolean = true) {
     private val settings = ScreenTimeSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, v -> on = v; true },
         readLong = { _, _ -> lastPull }, saveLong = { _, v -> lastPull = v; true }, now = { clock })
-    fun queries(source: ScreenEventSource, dao: ScreenTimeDao, permitted: Boolean = true, excluded: Set<String> = emptySet()) =
-        ScreenTimeQueries(dao, ScreenTimePuller(settings, source, dao, { clock }, { false }), settings, { permitted }, excluded, { clock })
+    fun queries(source: ScreenEventSource, dao: ScreenTimeDao, permitted: Boolean = true,
+                playbackPermitted: Boolean = true, excluded: Set<String> = emptySet()) =
+        ScreenTimeQueries(dao, ScreenTimePuller(settings, source, dao, { clock }, { false }), settings,
+            { permitted }, { playbackPermitted }, excluded, { clock })
 }
 
 class ScreenTimeQueriesTest {
@@ -151,6 +191,29 @@ class ScreenTimeQueriesTest {
             fail("until <= from 应抛 IllegalArgumentException")
         } catch (_: IllegalArgumentException) {
         }
+    }
+
+    /** 必测 7：未结束行按 lastSeenAt 截止并裁到区间；标题脱敏；无通知使用权时历史照常返回并带 notification_access_missing。 */
+    @Test fun openPlaybackClippedAndHistoryKeptWithoutNotificationAccess() = runBlocking {
+        val dao = QDao()
+        val f = T - HOUR
+        dao.insertPlayback(PlaybackRow(sessionKey = "s1", pkg = "com.ximalaya.ting.android", name = "小宇宙",
+            title = "标题】｜当时在：x", subtitle = null, fromAt = f, untilAt = null, lastSeenAt = f + 30 * 60_000))
+        dao.recordGap(ScreenCoverageGapRow(source = PLAYBACK_SOURCE, fromAt = f + 12 * 60_000, untilAt = f + 20 * 60_000, code = GapCode.LISTENER_DISCONNECTED))
+        dao.advanceCoveredUntil(SCREEN_SOURCE, T)
+        val env = Env(on = true).apply { lastPull = T }
+        val result = env.queries(QSource(), dao, playbackPermitted = false).sessions(f + 10 * 60_000, T)
+        assertEquals(
+            listOf(DevicePlayback("com.ximalaya.ting.android", "小宇宙", "标题  当时在：x", null, f + 10 * 60_000, f + 30 * 60_000)),
+            result.devicePlayback,
+        )
+        assertEquals(
+            listOf(
+                CoverageGap(GapCode.LISTENER_DISCONNECTED, PLAYBACK_SOURCE, f + 12 * 60_000, f + 20 * 60_000, "设置 → 通知使用权 → 回响 重新开启"),
+                CoverageGap(GapCode.NOTIFICATION_ACCESS_MISSING, PLAYBACK_SOURCE, f + 10 * 60_000, T, "设置 → 通知使用权 → 回响 开启"),
+            ),
+            result.gaps,
+        )
     }
 }
 
