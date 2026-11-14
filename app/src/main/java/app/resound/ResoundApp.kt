@@ -120,6 +120,28 @@ class ResoundApp : Application() {
         AppGraph.envSound = envSound
         AppGraph.location = app.resound.location.LocationRepository.create(this, database, scope)
         AppGraph.situation = app.resound.context.LocalSituationLookup.create(database, AppGraph.location, scope, AppGraph.platform.zone, AppGraph.platform.dispatchers.io)
+        // 卡 185b：屏幕时间采集底座；开关默认关，拉取器单例供周期任务与查询前拉取共用同一 Mutex。
+        val screenPrefs = getSharedPreferences("screen-time", MODE_PRIVATE)
+        val screenTimeSettings = app.resound.screentime.ScreenTimeSettings(
+            readBoolean = { key, def -> screenPrefs.getBoolean(key, def) },
+            saveBoolean = { key, value -> screenPrefs.edit().putBoolean(key, value).commit() },
+            readLong = { key, def -> screenPrefs.getLong(key, def) },
+            saveLong = { key, value -> screenPrefs.edit().putLong(key, value).commit() },
+            onReenabled = {
+                // 关闭期间采不到；重新打开时把已有覆盖进度到此刻之间补一条 disabled 缺口。
+                scope.launch {
+                    val covered = database.screenTime().state(app.resound.screentime.SCREEN_SOURCE)?.coveredUntil ?: return@launch
+                    val at = AppGraph.platform.now.now()
+                    if (covered < at) database.screenTime().recordGap(app.resound.screentime.ScreenCoverageGapRow(
+                        source = app.resound.screentime.SCREEN_SOURCE, fromAt = covered, untilAt = at, code = "disabled"))
+                }
+            })
+        AppGraph.screenTimeSettings = screenTimeSettings
+        AppGraph.screenTimePuller = app.resound.screentime.ScreenTimePuller(screenTimeSettings,
+            app.resound.screentime.AndroidScreenEventSource(this), database.screenTime(),
+            now = AppGraph.platform.now::now, denied = { it is SecurityException },
+            diagnostic = { android.util.Log.i("screentime", it) })
+        app.resound.screentime.ScreenTimePullWorker.schedule(this, screenTimeSettings.enabled.value)
         val originalAudio = LocalOriginalAudio(database.transcribe(), getSharedPreferences("transcribe", MODE_PRIVATE), scope,
             guard = { block -> voiceprintRepository.withAudioCleanup(block) },
             playback = PlaybackCaptureHold(scope, CaptureService::playbackHold))
@@ -192,7 +214,7 @@ class ResoundApp : Application() {
         digestRunner = DigestRunner(this, database.memory(), llm, digestSettings, { AppGraph.prompts.text("digest") }, situation = AppGraph.situation, thingExtraction = thingExtraction, networkAllowed = {
             val connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-        }, unseparated = database.transcribe()::unseparated, isMedia = database.envSound()::media, voiceprintReady = voiceprintRepository::isReady, hotwords = hotwords::merged, afterDigest = { manual -> app.resound.importer.ImportTodoMerge.all(database); skillScheduler.afterDigest(manual) })
+        }, unseparated = database.transcribe()::unseparated, playbackMillis = database.transcribe()::playbackMillis, isMedia = database.envSound()::media, voiceprintReady = voiceprintRepository::isReady, hotwords = hotwords::merged, afterDigest = { manual -> app.resound.importer.ImportTodoMerge.all(database); skillScheduler.afterDigest(manual) })
         AppGraph.importKinds = app.resound.importer.AndroidImportKinds.create(this, database,
             AppGraph.importer as app.resound.importer.AndroidAudioImporter, scope, digestSettings, llm,
             app.resound.importer.ImportSpeakers(database, pcmReader::readPcm, { CampPlusEmbedding(this) }),

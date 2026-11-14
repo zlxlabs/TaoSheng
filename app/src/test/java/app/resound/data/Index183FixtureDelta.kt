@@ -10,6 +10,9 @@ internal object Index183FixtureDelta {
     val spec: JSONObject by lazy { JSONObject(File("src/test/resources/index183/expected-delta.json").readText()) }
     private val snapshots get() = spec.getJSONArray("snapshots").let { a -> (0 until a.length()).map(a::getString).toSet() }
     val indexRows get() = spec.getJSONArray("indices").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("row") } }
+    val tableMasterRows get() = spec.getJSONArray("tables").let { a -> (0 until a.length()).map { n -> a.getJSONObject(n).getJSONArray("masterRows").getString(0) } }
+    val tableBlocks get() = spec.getJSONArray("tables").let { a -> (0 until a.length()).map { n ->
+        a.getJSONObject(n).getJSONArray("block").let { b -> (0 until b.length()).map(b::getString) } } }
 
     fun assertSame(name: String, old: String, actual: String) {
         val sqlRules = spec.getJSONArray("querySql")
@@ -70,6 +73,20 @@ internal object Index183FixtureDelta {
             assertEquals("$name 索引名称次数", rule.getInt("occurrences"), observed.count { it.startsWith(prefix) })
             assertEquals("$name 索引完整行次数", rule.getInt("occurrences"), observed.count { it == exact })
             observed.removeAt(observed.indexOf(exact))
+        }
+        val tables = spec.getJSONArray("tables")
+        repeat(tables.length()) { n ->
+            val rule = tables.getJSONObject(n)
+            val prefix = "[\"table\",\"${rule.getString("name")}\","
+            assertFalse("$name 旧夹具不应有新表", expected.any { it.startsWith(prefix) })
+            val candidates = rule.getJSONArray("masterRows").let { a -> (0 until a.length()).map(a::getString) }
+            assertEquals("$name 表 sqlite_master 行次数", rule.getInt("occurrences"), candidates.sumOf { c -> observed.count { it == c } })
+            observed.removeAt(observed.indexOfFirst { it in candidates })
+            val block = rule.getJSONArray("block").let { b -> (0 until b.length()).map(b::getString) }
+            assertEquals("$name 表数据块次数", rule.getInt("occurrences"), observed.count { it == block[0] })
+            val at = observed.indexOf(block[0])
+            block.forEachIndexed { i, line -> assertEquals("$name 表数据块第${i + 1}行", line, observed[at + i]) }
+            repeat(block.size) { observed.removeAt(at) }
         }
         assertEquals(name, old, observed.joinToString("\n"))
     }

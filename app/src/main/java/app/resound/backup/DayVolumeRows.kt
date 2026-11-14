@@ -24,8 +24,12 @@ internal object DayVolumeRows {
         "app_power" to "at", "battery" to "at", "heartbeats" to "at", "watchdog" to "at", "env_sounds" to "startAt",
         // 足迹（PR #19）：定位点按天分卷
         "location_points" to "at",
+        // 卡 185b：屏幕时间原始事件按天分卷
+        "screen_events" to "at",
     )
-    val global = setOf("import_fingerprints", "folder_observations", "device_transfers", "things", "thing_watch_state", "voiceprint_people", "voiceprint_samples", "voiceprint_exclusions", "location_places")
+    val global = setOf("import_fingerprints", "folder_observations", "device_transfers", "things", "thing_watch_state", "voiceprint_people", "voiceprint_samples", "voiceprint_exclusions", "location_places",
+        // 卡 185b：屏幕时间全局表；覆盖指针与缺口不随天卷走
+        "screen_app_names", "screen_pull_state", "screen_coverage_gaps")
     val zone: ZoneId = ZoneId.of("Asia/Shanghai")
     fun day(at: Long): String = Instant.ofEpochMilli(at).atZone(zone).toLocalDate().toString()
     fun canonical(value: Any?): String = when (value) {
@@ -127,6 +131,8 @@ internal object DayVolumeRows {
                     db.immediateTransaction {
                         insert(this, state, true)
                         days.forEach { insert(this, it, false) }
+                        // 恢复收尾（卡 185b）：覆盖指针以表内实际事件为准；状态卷比事件卷新时避免假覆盖。
+                        executeSql("UPDATE screen_pull_state SET coveredUntil = COALESCE((SELECT MAX(at) FROM screen_events), coveredUntil) WHERE source = 'screen'")
                         listOf("lines_fts", "events_fts", "items_fts").forEach { executeSql("DELETE FROM $it") }
                         val statements = mutableListOf<String>()
                         app.resound.search.SearchIndex.install({ statements += it }, backfill = true)

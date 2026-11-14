@@ -64,4 +64,61 @@ class SituationPrompt130Test {
         assertTrue(prompt.system("模板").contains("不要把情境行当成原话"))
         assertTrue(prompt.system("模板").contains("以说话内容为准"))
     }
+
+    // ---------- 卡 184：外放提示（playbackMillis ≥ 3000 的 mic 片段） ----------
+
+    private fun lookup() = object : SituationLookup {
+        override suspend fun placeDuring(start: Long, end: Long) = if (start == 0L) PlaceAt("公司", false, start, end) else null
+        override suspend fun envDuring(start: Long, end: Long, limit: Int) = when (start) {
+            0L -> listOf("键盘声", "附近有车流")
+            3000L -> listOf("雨")
+            else -> emptyList()
+        }
+        override suspend fun staysAt(placeName: String, from: Long, to: Long) = emptyList<PlaceAt>()
+    }
+
+    @Test fun disabledMarksOnlySegmentsAtOrAboveThresholdAndNeverQueries() = runBlocking {
+        val forbidden = object : SituationLookup {
+            override suspend fun placeDuring(start: Long, end: Long): PlaceAt? = error("关闭不应查询")
+            override suspend fun envDuring(start: Long, end: Long, limit: Int): List<String> = error("关闭不应查询")
+            override suspend fun staysAt(placeName: String, from: Long, to: Long) = emptyList<PlaceAt>()
+        }
+        val prompt = SituationPrompt(false, forbidden, mapOf(1L to 3000L, 3L to 2999L))
+        val (text, _) = prompt.transcript(lines, zone = zone)
+        assertEquals(listOf("【外放：有】"), text.lines().filter { it.startsWith("【") })
+        assertTrue(text.contains("【外放：有】\n[1] "))
+        assertEquals("模板\n\n${SituationPrompt.PLAYBACK_RULE}", prompt.system("模板"))
+    }
+
+    @Test fun disabledWithoutLookupStillMarksPlaybackAndAppendsRuleWithoutBaseRule() = runBlocking {
+        val prompt = SituationPrompt(false, null, mapOf(1L to 5000L))
+        val (text, _) = prompt.transcript(lines, zone = zone)
+        assertEquals(listOf("【外放：有】"), text.lines().filter { it.startsWith("【") })
+        assertEquals("模板\n\n${SituationPrompt.PLAYBACK_RULE}", prompt.system("模板"))
+    }
+
+    @Test fun enabledAppendsPlaybackMarkerAfterExistingPartsAndRuleAfterBaseRule() = runBlocking {
+        val prompt = SituationPrompt(true, lookup(), mapOf(1L to 5000L, 3L to 5000L))
+        val (text, _) = prompt.transcript(lines, zone = zone)
+        assertEquals(listOf("【当时在：公司｜周围：键盘声、附近有车流｜外放：来源未知】", "【周围：雨】", "【外放：来源未知】"),
+            text.lines().filter { it.startsWith("【") })
+        val system = prompt.system("模板")
+        assertTrue(system.contains(SituationPrompt.RULE))
+        assertTrue(system.endsWith(SituationPrompt.PLAYBACK_RULE))
+    }
+
+    @Test fun enabledWithZeroPlaybackKeepsAllPromptsByteForByte() = runBlocking {
+        val source = lookup()
+        val baseline = SituationPrompt(true, source)
+        val zero = SituationPrompt(true, source, mapOf(1L to 0L, 3L to 0L))
+        assertEquals(baseline.system("模板"), zero.system("模板"))
+        assertEquals(baseline.transcript(lines, zone = zone), zero.transcript(lines, zone = zone))
+        assertEquals(baseline.merge(events, zone), zero.merge(events, zone))
+        assertEquals("模板\n\n${SituationPrompt.RULE}", zero.system("模板"))
+    }
+
+    @Test fun mergeNeverMarksPlaybackEvenWhenProvided() = runBlocking {
+        assertFalse(SituationPrompt(true, lookup(), mapOf(1L to 9000L)).merge(events, zone).contains("外放"))
+        assertFalse(SituationPrompt(false, null, mapOf(1L to 9000L)).merge(events, zone).contains("外放"))
+    }
 }
