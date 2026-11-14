@@ -25,13 +25,20 @@ object ScreenTimeReports {
         }.sortedWith(compareByDescending<AppMinutes> { it.minutes }.thenBy { it.pkg })
         val top = apps.take(topApps)
         val appLines = top.joinToString("\n") { "${it.name} ${it.minutes} 分" }
+        val playbackLines = playbackLines(result.devicePlayback, topApps)
+        val playbackBlock = playbackLines.takeIf { it.isNotEmpty() }?.let { "设备播放记录：\n$it" }
         val gapLine = gapLine(result.gaps)
-        val body = listOfNotNull(appLines.takeIf { it.isNotEmpty() }, gapLine).joinToString("\n")
+        val body = listOfNotNull(appLines.takeIf { it.isNotEmpty() }, playbackBlock, gapLine).joinToString("\n")
         val markdown = buildString {
             append(durationText("今日共", totalMinutes))
             if (top.isNotEmpty()) {
                 append("\n\n")
                 append(top.joinToString("\n") { "- ${it.name} ${it.minutes} 分" })
+            }
+            if (playbackLines.isNotEmpty()) {
+                append("\n\n")
+                append("设备播放记录（只表示手机在播放，不代表本人在听）：\n")
+                append(playbackLines.lines().joinToString("\n") { "- $it" })
             }
             if (gapLine != null) append("\n\n").append(gapLine)
         }
@@ -39,6 +46,17 @@ object ScreenTimeReports {
     }
 
     private fun durationMs(session: NamedAppSession) = (session.until - session.from).coerceAtLeast(0L)
+
+    private fun playbackLines(records: List<DevicePlayback>, topApps: Int): String =
+        records.groupBy { it.name to it.title }.map { (key, rows) ->
+            val minutes = roundMinutes(rows.sumOf { (it.until - it.from).coerceAtLeast(0L) })
+            Triple(key.first, key.second, minutes)
+        }.filter { it.third > 0 }
+            .sortedWith(compareByDescending<Triple<String, String?, Int>> { it.third }.thenBy { it.first })
+            .take(topApps)
+            .joinToString("\n") { (name, title, minutes) ->
+                if (title != null) "$name《$title》 $minutes 分" else "$name $minutes 分"
+            }
 
     /** 四舍五入到整分钟（正数 half-up，不用银行家舍入）。 */
     internal fun roundMinutes(ms: Long) = ((ms.coerceAtLeast(0L) + 30_000L) / 60_000L).toInt()

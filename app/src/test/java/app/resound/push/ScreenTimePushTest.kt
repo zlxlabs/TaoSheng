@@ -4,8 +4,10 @@ import android.app.Application
 import android.content.Context
 import app.resound.data.MemoryEventEntity
 import app.resound.screentime.CoverageGap
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.GapCode
 import app.resound.screentime.NamedAppSession
+import app.resound.screentime.PLAYBACK_SOURCE
 import app.resound.screentime.SCREEN_SOURCE
 import app.resound.screentime.ScreenTimeReader
 import app.resound.screentime.ScreenTimeResult
@@ -50,13 +52,19 @@ class ScreenTimePushTest {
         enabled = true,
         sessions = listOf(NamedAppSession("tv.danmaku.bili", "哔哩哔哩", t(17, 11, 46), t(20, 23, 46))),
         coverageUntil = t(22, 0),
-        gaps = listOf(CoverageGap(GapCode.COVERAGE_LAG, SCREEN_SOURCE, t(21, 0), t(22, 0), "等待下一次采集")),
+        gaps = listOf(
+            CoverageGap(GapCode.COVERAGE_LAG, SCREEN_SOURCE, t(21, 0), t(22, 0), "等待下一次采集"),
+            CoverageGap(GapCode.NOTIFICATION_ACCESS_MISSING, PLAYBACK_SOURCE, t(0, 0), t(22, 0), "设置 → 通知使用权 → 回响 开启"),
+        ),
+        devicePlayback = listOf(
+            DevicePlayback("app.podcast.cosmos", "小宇宙", "271.两眼一抹黑，试试也不亏", "…", t(8, 2, 10), t(8, 47, 55)),
+        ),
     )
 
     @Test fun webhookJsonMatchesSampleBytesAndHeaders() = runBlocking {
         val message = buildScreenTimeMessage(date, at, zone, ScreenTimeReader { _, _ -> sampleResult() })!!
         val request = transport.request(PushKind.Webhook, PushFormat.Json, mapOf("url" to "https://example.com/hook"), message)
-        val expected = """{"title":"今日屏幕时间 3 小时 12 分","body":"哔哩哔哩 192 分\n部分时段没有数据：等待下一次采集","topic":"ScreenTime","deepLink":null,"at":1794657600000,"screenTime":{"schemaVersion":1,"date":"2026-11-14","coverageUntil":"2026-11-14T22:00:00+08:00","totalMinutes":192,"apps":[{"package":"tv.danmaku.bili","name":"哔哩哔哩","minutes":192}],"timeline":[{"package":"tv.danmaku.bili","name":"哔哩哔哩","start":"2026-11-14T17:11:46+08:00","end":"2026-11-14T20:23:46+08:00"}],"devicePlayback":[],"gaps":[{"code":"coverage_lag","source":"screen","from":"2026-11-14T21:00:00+08:00","until":"2026-11-14T22:00:00+08:00","fix":"等待下一次采集"}]},"type":"screen_time","version":1,"app":"resound"}"""
+        val expected = """{"title":"今日屏幕时间 3 小时 12 分","body":"哔哩哔哩 192 分\n设备播放记录：\n小宇宙《271.两眼一抹黑，试试也不亏》 46 分\n部分时段没有数据：等待下一次采集；设置 → 通知使用权 → 回响 开启","topic":"ScreenTime","deepLink":null,"at":1794657600000,"screenTime":{"schemaVersion":1,"date":"2026-11-14","coverageUntil":"2026-11-14T22:00:00+08:00","totalMinutes":192,"apps":[{"package":"tv.danmaku.bili","name":"哔哩哔哩","minutes":192}],"timeline":[{"package":"tv.danmaku.bili","name":"哔哩哔哩","start":"2026-11-14T17:11:46+08:00","end":"2026-11-14T20:23:46+08:00"}],"devicePlayback":[{"package":"app.podcast.cosmos","name":"小宇宙","title":"271.两眼一抹黑，试试也不亏","subtitle":"…","start":"2026-11-14T08:02:10+08:00","end":"2026-11-14T08:47:55+08:00"}],"gaps":[{"code":"coverage_lag","source":"screen","from":"2026-11-14T21:00:00+08:00","until":"2026-11-14T22:00:00+08:00","fix":"等待下一次采集"},{"code":"notification_access_missing","source":"playback","from":"2026-11-14T00:00:00+08:00","until":"2026-11-14T22:00:00+08:00","fix":"设置 → 通知使用权 → 回响 开启"}]},"type":"screen_time","version":1,"app":"resound"}"""
         assertEquals(expected, request.text())
         assertEquals("screen_time", request.header("X-Resound-Type"))
         assertEquals("2026-11-14", request.header("X-Resound-Date"))
