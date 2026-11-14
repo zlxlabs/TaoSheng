@@ -58,7 +58,8 @@ interface CaptureDao {
     VoiceprintSampleEntity::class, VoiceprintExclusionEntity::class, VoiceprintPersonEntity::class,
     AskConversationEntity::class, AskMessageEntity::class, ReviewEntity::class, app.resound.search.LineFts::class, app.resound.search.EventFts::class,
     app.resound.search.ItemFts::class, app.resound.search.EmbeddingEntity::class,
-    PendingDigest::class, app.resound.envsound.EnvSoundRow::class, app.resound.skills.SkillCardRow::class, app.resound.skills.SkillRunRow::class, app.resound.location.LocationPoint::class, app.resound.location.PlaceRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
+    PendingDigest::class, app.resound.envsound.EnvSoundRow::class, app.resound.skills.SkillCardRow::class, app.resound.skills.SkillRunRow::class, app.resound.location.LocationPoint::class, app.resound.location.PlaceRow::class,
+    app.resound.screentime.ScreenEventRow::class, app.resound.screentime.ScreenAppNameRow::class, app.resound.screentime.ScreenPullStateRow::class, app.resound.screentime.ScreenCoverageGapRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
 @ConstructedBy(CaptureDatabaseConstructor::class)
 abstract class CaptureDatabase : RoomDatabase() {
     /** 由安卓装配入口传入；内存测试库为 null，不从底层连接反查路径。 */
@@ -83,9 +84,10 @@ abstract class CaptureDatabase : RoomDatabase() {
     abstract fun skills(): app.resound.skills.SkillDao
     abstract fun location(): app.resound.location.LocationDao
     abstract fun places(): app.resound.location.PlaceDao
+    abstract fun screenTime(): app.resound.screentime.ScreenTimeDao
     companion object {
         /** 当前数据库版本；加迁移时同步改这里 */
-        const val VERSION = 34
+        const val VERSION = 35
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
@@ -337,7 +339,18 @@ abstract class CaptureDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transcript_lines_startAt` ON `transcript_lines` (`startAt`)")
             }
         }
-        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
+        /** 卡 185b：屏幕时间四张表；事件唯一索引（at,pkg,type,cls）让重复拉取靠冲突忽略去重。 */
+        val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(db: androidx.sqlite.SQLiteConnection) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `pkg` TEXT NOT NULL, `cls` TEXT NOT NULL DEFAULT '', `type` INTEGER NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_screen_events_at_pkg_type_cls` ON `screen_events` (`at`, `pkg`, `type`, `cls`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_app_names` (`pkg` TEXT NOT NULL PRIMARY KEY, `name` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_pull_state` (`source` TEXT NOT NULL PRIMARY KEY, `coveredUntil` INTEGER, `floor` INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_coverage_gaps` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source` TEXT NOT NULL, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER NOT NULL, `code` TEXT NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_screen_coverage_gaps_source_fromAt` ON `screen_coverage_gaps` (`source`, `fromAt`)")
+            }
+        }
+        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
     }
 }
 

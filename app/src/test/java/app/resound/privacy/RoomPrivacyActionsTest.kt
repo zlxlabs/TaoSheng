@@ -1,6 +1,7 @@
 package app.resound.privacy
 
 import app.resound.data.testSql
+import app.resound.screentime.*
 import android.app.Application
 import androidx.room.Room
 import app.resound.data.*
@@ -150,5 +151,28 @@ class RoomPrivacyActionsTest {
         db.transcribe().complete(SegmentEntity(1, 1, 2, "mic", "missing", 0), listOf(TranscriptLineEntity(1, 1, 1, 2, "旧结果", null)))
         db.memory().saveDigest(listOf(eventRow(1) to listOf(1)), { listOf(item(1, it.single(), 1)) }, listOf(1), now)
         assertEquals(0, count("memory_events")); assertEquals(0, count("memory_items"))
+    }
+
+    /** 卡 185b：按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
+    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloorSoPullStartsAfterIt() = runBlocking {
+        db.screenTime().insertEvents(listOf(
+            ScreenEventRow(at = now - 30_000, pkg = "a", cls = "", type = 1),
+            ScreenEventRow(at = now - 90_000, pkg = "a", cls = "", type = 1)))
+        db.screenTime().advanceCoveredUntil(SCREEN_SOURCE, now)
+        privacy.deleteRange(now - 60_000, now)
+        assertEquals(1, count("screen_events"))
+        assertEquals(now - 90_000, db.screenTime().events(0, now).single().at)
+        assertEquals(now, db.screenTime().state(SCREEN_SOURCE)?.floor)
+        var sinceFrom = 0L
+        val puller = ScreenTimePuller(
+            ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
+                readLong = { _, def -> def }, saveLong = { _, _ -> true }),
+            object : ScreenEventSource {
+                override fun permitted() = true
+                override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }
+                override suspend fun appNames(pkgs: Set<String>) = emptyMap<String, String>()
+            }, db.screenTime(), now = { now }, denied = { it is SecurityException })
+        puller.pull()
+        assertTrue(sinceFrom >= now)
     }
 }

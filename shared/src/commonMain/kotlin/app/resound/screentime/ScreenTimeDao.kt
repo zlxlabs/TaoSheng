@@ -1,0 +1,65 @@
+package app.resound.screentime
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Transaction
+import androidx.room.Upsert
+
+/** 屏幕时间读写。读四个方法是卡 186 固定消费的签名；写方法只服务本卡拉取与隐私删除。 */
+@Dao
+interface ScreenTimeDao {
+    @Query("SELECT * FROM screen_events WHERE at >= :from AND at < :until ORDER BY at, id")
+    suspend fun events(from: Long, until: Long): List<ScreenEventRow>
+
+    @Query("SELECT * FROM screen_app_names ORDER BY pkg")
+    suspend fun names(): List<ScreenAppNameRow>
+
+    @Query("SELECT * FROM screen_pull_state WHERE source = :source")
+    suspend fun state(source: String): ScreenPullStateRow?
+
+    /** 与 [from, until) 有重叠的缺口。 */
+    @Query("SELECT * FROM screen_coverage_gaps WHERE source = :source AND fromAt < :until AND untilAt > :from ORDER BY fromAt, id")
+    suspend fun gaps(source: String, from: Long, until: Long): List<ScreenCoverageGapRow>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertEvents(events: List<ScreenEventRow>)
+
+    @Upsert
+    suspend fun upsertNames(names: List<ScreenAppNameRow>)
+
+    /** 行已存在返回 -1；由此区分首建与推进。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertStateRow(row: ScreenPullStateRow): Long
+
+    @Query("UPDATE screen_pull_state SET coveredUntil = MAX(COALESCE(coveredUntil, 0), :value) WHERE source = :source")
+    suspend fun updateCoveredUntil(source: String, value: Long)
+
+    /** 覆盖指针只增不减；行不存在时首建。 */
+    @Transaction
+    suspend fun advanceCoveredUntil(source: String, value: Long) {
+        if (insertStateRow(ScreenPullStateRow(source, value, 0)) == -1L) updateCoveredUntil(source, value)
+    }
+
+    @Query("UPDATE screen_pull_state SET floor = MAX(floor, :value) WHERE source = :source")
+    suspend fun raiseFloor(source: String, value: Long)
+
+    @Insert
+    suspend fun recordGap(gap: ScreenCoverageGapRow)
+
+    @Query("DELETE FROM screen_events WHERE at >= :from AND at < :until")
+    suspend fun deleteEvents(from: Long, until: Long)
+
+    @Query("SELECT MAX(at) FROM screen_events")
+    suspend fun lastEventAt(): Long?
+
+    /** 一次拉取的事件、名称与覆盖指针在同一事务落库；失败整体回滚、不留副作用。 */
+    @Transaction
+    suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long) {
+        if (events.isNotEmpty()) insertEvents(events)
+        if (names.isNotEmpty()) upsertNames(names)
+        if (insertStateRow(ScreenPullStateRow(SCREEN_SOURCE, coveredUntil, 0)) == -1L)
+            updateCoveredUntil(SCREEN_SOURCE, coveredUntil)
+    }
+}
