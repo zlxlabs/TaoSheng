@@ -1,5 +1,6 @@
 package app.resound.context
 
+import app.resound.screentime.DevicePlayback
 import app.resound.screentime.NamedAppSession
 
 /*
@@ -33,4 +34,7 @@ interface SituationLookup {
 
     /** [from, until) 内手机前台使用段（卡 186c）；屏幕时间未装配或关闭时返回空。已脱敏的 [NamedAppSession.name]。 */
     suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = emptyList()
+
+    /** [from, until) 内设备播放记录（卡 190）；屏幕时间未装配、关闭或没有通知使用权时返回空。 */
+    suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> = emptyList()
 }

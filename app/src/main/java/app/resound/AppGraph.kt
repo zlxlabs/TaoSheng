@@ -93,6 +93,8 @@ object AppGraph {
     val isScreenTimeReady: Boolean get() = ::screenTimePuller.isInitialized
     /** 屏幕时间读取入口（卡 186c 装配）；为 null 时消费方按总开关关闭处理（ScreenTimeResult.DISABLED）。 */
     @Volatile var screenTimeReader: app.resound.screentime.ScreenTimeReader? = null
+    /** 设备播放记录接收方（卡 190 装配）；为 null 时通知监听服务丢弃回调。 */
+    @Volatile var playbackSink: app.resound.screentime.PlaybackSink? = null
 
     // 卡 079：寻物
     lateinit var things: app.resound.things.ThingRepository
