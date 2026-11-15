@@ -39,25 +39,25 @@
   ],
   "version": {
     "oldLine": "user_version=33",
-    "newLine": "user_version=36",
+    "newLine": "user_version=37",
     "occurrences": 1
   },
   "identity": {
     "table": "room_master_table",
     "columns": "columns=[\"id\",\"identity_hash\"]",
     "oldRow": "[{\"integer\":42},{\"text\":\"c8e25a89cb4bb9cf5903037158d9d8d3\"}]",
-    "newRow": "[{\"integer\":42},{\"text\":\"4324ee42f6c776d1a0ad6e36590e98fc\"}]",
+    "newRow": "[{\"integer\":42},{\"text\":\"c4833f8c0c29b234f112233f5a7c9b48\"}]",
     "occurrences": 1
   },
   "oldIdentityHash": "c8e25a89cb4bb9cf5903037158d9d8d3",
-  "newIdentityHash": "4324ee42f6c776d1a0ad6e36590e98fc",
+  "newIdentityHash": "c4833f8c0c29b234f112233f5a7c9b48",
   "oldSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
     "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8e25a89cb4bb9cf5903037158d9d8d3')"
   ],
   "newSetupQueries": [
     "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4324ee42f6c776d1a0ad6e36590e98fc')"
+    "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c4833f8c0c29b234f112233f5a7c9b48')"
   ],
   "indices": [
     {
@@ -216,5 +216,13 @@
       "newLine": "SQL SELECT l.id, l.startAt AS at, COALESCE(l.speakerName,l.speakerTag,'某人') AS title, l.text AS quote, l.voiceInputJson FROM transcript_lines l NOT INDEXED WHERE (l.eventId IS NULL OR EXISTS (SELECT 1 FROM memory_events e WHERE e.id=l.eventId AND e.deleted=0)) AND (l.id IN (SELECT rowid FROM lines_fts WHERE lines_fts MATCH ?)) ORDER BY l.startAt DESC, l.id DESC LIMIT 41",
       "occurrences": 1
     }
-  ]
+  ],
+  "columnAdds": {
+    "table": "segments",
+    "columnsOldLine": "columns=[\"id\",\"startAt\",\"endAt\",\"sourceId\",\"path\",\"sizeBytes\",\"status\",\"attempts\",\"nextRetryAt\",\"error\",\"completedAt\",\"logId\",\"sentMillis\",\"voiceprintProcessedAt\",\"playbackMillis\",\"firstFailedAt\",\"asrSource\",\"redoPending\",\"separateSpeakers\",\"importRecordId\",\"importChannel\",\"speakerCount\"]",
+    "columnsNewLine": "columns=[\"id\",\"startAt\",\"endAt\",\"sourceId\",\"path\",\"sizeBytes\",\"status\",\"attempts\",\"nextRetryAt\",\"error\",\"completedAt\",\"logId\",\"sentMillis\",\"voiceprintProcessedAt\",\"playbackMillis\",\"firstFailedAt\",\"asrSource\",\"redoPending\",\"separateSpeakers\",\"importRecordId\",\"importChannel\",\"speakerCount\",\"playbackDigest\"]",
+    "dataSuffix": ",{\"integer\":0}]",
+    "insertSql": "ALTER TABLE segments ADD COLUMN playbackDigest INTEGER NOT NULL DEFAULT 0",
+    "masterFreshLine": "[\"table\",\"segments\",\"segments\",\"CREATE TABLE `segments` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER NOT NULL, `sourceId` TEXT NOT NULL, `path` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `status` TEXT NOT NULL, `attempts` INTEGER NOT NULL DEFAULT 0, `nextRetryAt` INTEGER, `error` TEXT, `completedAt` INTEGER, `logId` TEXT, `sentMillis` INTEGER NOT NULL DEFAULT 0, `voiceprintProcessedAt` INTEGER, `playbackMillis` INTEGER NOT NULL DEFAULT 0, `firstFailedAt` INTEGER, `asrSource` TEXT, `redoPending` INTEGER NOT NULL DEFAULT 0, `separateSpeakers` INTEGER, `importRecordId` INTEGER, `importChannel` INTEGER, `speakerCount` INTEGER, `playbackDigest` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`importRecordId`) REFERENCES `import_records`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )\"]"
+  }
 }
