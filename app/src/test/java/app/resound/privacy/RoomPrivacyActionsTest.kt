@@ -1,7 +1,6 @@
 package app.resound.privacy
 
 import app.resound.data.testSql
-import app.resound.screentime.*
 import android.app.Application
 import androidx.room.Room
 import app.resound.data.*
@@ -151,43 +150,5 @@ class RoomPrivacyActionsTest {
         db.transcribe().complete(SegmentEntity(1, 1, 2, "mic", "missing", 0), listOf(TranscriptLineEntity(1, 1, 1, 2, "旧结果", null)))
         db.memory().saveDigest(listOf(eventRow(1) to listOf(1)), { listOf(item(1, it.single(), 1)) }, listOf(1), now)
         assertEquals(0, count("memory_events")); assertEquals(0, count("memory_items"))
-    }
-
-    /** 卡 185b：按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
-    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloorSoPullStartsAfterIt() = runBlocking {
-        db.screenTime().insertEvents(listOf(
-            ScreenEventRow(at = now - 30_000, pkg = "a", cls = "", type = 1),
-            ScreenEventRow(at = now - 90_000, pkg = "a", cls = "", type = 1)))
-        db.screenTime().advanceCoveredUntil(SCREEN_SOURCE, now)
-        privacy.deleteRange(now - 60_000, now)
-        assertEquals(1, count("screen_events"))
-        assertEquals(now - 90_000, db.screenTime().events(0, now).single().at)
-        assertEquals(now, db.screenTime().state(SCREEN_SOURCE)?.floor)
-        var sinceFrom = 0L
-        val puller = ScreenTimePuller(
-            ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now }),
-            object : ScreenEventSource {
-                override fun permitted() = true
-                override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }
-                override suspend fun appNames(pkgs: Set<String>) = emptyMap<String, String>()
-            }, db.screenTime(), now = { now }, denied = { it is SecurityException })
-        puller.pull()
-        assertTrue(sinceFrom >= now)
-    }
-
-    /** 必测 8：区间内的播放行删除，跨左边界的行截断到 from。 */
-    @Test fun deleteRangeRemovesInsidePlaybackAndTruncatesLeftCrossing() = runBlocking {
-        val from = now - 60_000
-        db.screenTime().insertPlayback(PlaybackRow(sessionKey = "in", pkg = "a", name = "a", title = "内",
-            subtitle = null, fromAt = from + 1_000, untilAt = now - 1_000, lastSeenAt = now - 1_000))
-        db.screenTime().insertPlayback(PlaybackRow(sessionKey = "left", pkg = "b", name = "b", title = "跨左",
-            subtitle = null, fromAt = now - 90_000, untilAt = null, lastSeenAt = now - 10_000))
-        privacy.deleteRange(from, now)
-        val left = db.screenTime().playbacksOverlapping(0, now + 1).single()
-        assertEquals("left", left.sessionKey)
-        assertEquals(now - 90_000, left.fromAt)
-        assertEquals(from, left.untilAt)
-        assertEquals(from, left.lastSeenAt)
     }
 }

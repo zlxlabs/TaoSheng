@@ -73,14 +73,14 @@ class TranscriptStoreRepository(
         val end = date.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone).toEpochMilliseconds()
         return combine(dao.day(start, end), clock) { rows, _ -> rows.filter { it.segment.status != "SkippedEnv" }.map { (segment, lines) ->
             SegmentTranscript(segment.id, segment.startAt, segment.endAt, TranscriptStatus.valueOf(segment.status),
-                lines.sortedWith(compareBy({ it.startAt }, { it.id })).map { TranscriptLine(it.id, it.startAt, it.endAt, it.text, it.speakerTag, it.speakerName, it.speakerScore, it.segmentId, readVoiceInput(it.voiceInputJson)) },
-                segment.error, segment.sourceId != "voice-input" && isAudioFile(FileRef(segment.path)), playbackHeld = segment.playbackDigest == 1)
+                lines.sortedWith(compareBy({ it.startAt }, { it.id })).map { TranscriptLine(it.id, it.startAt, it.endAt, it.text, it.speakerTag, it.speakerName, it
+                    .speakerScore, it.segmentId, readVoiceInput(it.voiceInputJson)) },
+                segment.error, segment.sourceId != "voice-input" && isAudioFile(FileRef(segment.path)))
         } }.flowOn(io)
     }
     override fun transcribeAnyway(segmentId: Long) { scope.launch {
         if (isAudioFile(FileRef(dao.segment(segmentId).path)) && dao.transcribeAnyway(segmentId) > 0) runNowAction()
     } }
-    override fun allowPlaybackDigest(segmentId: Long) { scope.launch { dao.allowPlaybackDigest(segmentId) } }
     override fun runNow() = runNowAction()
     override fun retryFailed() { scope.launch { dao.retryFailed(now.now()); runNowAction() } }
     override fun ignoreFailed() { scope.launch { dao.ignoreFailed(now.now()) } }
@@ -92,7 +92,8 @@ class TranscriptStoreRepository(
         val state = queue.value
         return buildString {
             appendLine("外放期间 ${dao.skippedPlaybackCount()} 段未转写")
-            appendLine("转写队列 pending=${state.pending} failed=${state.failed} running=${state.running} lastRunAt=${state.lastRunAt} nextRunAt=${state.nextRunAt} hasError=${state.lastError != null} usedSecondsToday=${state.usedSecondsToday} usedSecondsTotal=${state.usedSecondsTotal}")
+            appendLine("转写队列 pending=${state.pending} failed=${state.failed} running=${state.running} lastRunAt=${state.lastRunAt} nextRunAt=${state
+                .nextRunAt} hasError=${state.lastError != null} usedSecondsToday=${state.usedSecondsToday} usedSecondsTotal=${state.usedSecondsTotal}")
             dao.recentAttempts().forEach { appendLine("转写元数据 $it") }
         }
     }

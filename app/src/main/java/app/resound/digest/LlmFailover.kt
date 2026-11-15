@@ -1,5 +1,12 @@
 package app.resound.digest
 
+import app.resound.diagnostics.FailureNotes
+
+import app.resound.ask.AskPrefetchRequired
+import app.resound.diagnostics.LlmDiagnostics
+import app.resound.platform.NowMillis
+import app.resound.topic.core.TopicRequestContext
+
 import android.content.Context
 import app.resound.data.MemoryDao
 import app.resound.usage.UsagePurpose
@@ -18,7 +25,7 @@ class LlmFailover(
     context: Context, private val providers: AndroidLlmProviders,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private val diagnostics = app.resound.diagnostics.LlmDiagnostics(context)
+    private val diagnostics = LlmDiagnostics(context)
     private val prefs = context.getSharedPreferences("digest", Context.MODE_PRIVATE)
     private val mutableEnabled = MutableStateFlow(prefs.getBoolean("failoverEnabled", true))
     val enabled = mutableEnabled.asStateFlow()
@@ -28,7 +35,9 @@ class LlmFailover(
     // 配置修改后，旧的在途请求不能再次把新配置放进冷却。
     private val generations = mutableMapOf<String, Long>()
     init {
-        providers.listen { id -> if (id != null) clear(id) }
+        // 改了某个服务商（地址、模型、密钥、请求头）清它的冷却；切换当前服务商（id 为空）清新选中的那个，
+        // 否则旧地址留下的失败记录会让新选择先被排到后面，报错里还可能出现旧地址（议题 #34）。
+        providers.listen { id -> clear(id ?: providers.activeId.value) }
         providers.onTestSuccess = ::clear
     }
     /** 只投影模型名及固定原因，不导出配置 id、异常 detail 或凭证。 */
@@ -36,7 +45,7 @@ class LlmFailover(
         val names = providers.saved.value.associate { it.id to "${it.name} / ${it.model}" }
         return synchronized(this) {
             cooling.entries.joinToString("\n") { (id, state) ->
-                "${names[id] ?: "已删除模型"} 冷却=${state.until > now()} 截止=${app.resound.diagnostics.LlmDiagnostics.stamp(state.until)} 原因=${state.reason}"
+                "${names[id] ?: "已删除模型"} 冷却=${state.until > now()} 截止=${LlmDiagnostics.stamp(state.until)} 原因=${state.reason}"
             }.ifBlank { "暂无" }
         }
     }
@@ -78,7 +87,7 @@ class LlmFailover(
         override fun coolIfCurrent(id: String, generation: Long, value: FailoverCooling) = synchronized(this@LlmFailover) {
             if ((generations[id] ?: 0) == generation) cooling[id] = value
         }
-    }, app.resound.platform.NowMillis(now), LlmInputBudget::inputChars,
+    }, NowMillis(now), LlmInputBudget::inputChars,
         classify = { e -> when (e) {
             is LlmInputLimitException -> FailoverFailure(reason(e), capacity = true)
             is LlmException -> FailoverFailure(reason(e), format = e.type == LlmError.Format,
@@ -100,8 +109,10 @@ class LlmFailover(
             recent.value?.let { diagnostics.switched(it.at, it.originalModel, it.actualModel, it.reason) }
         }) { candidate ->
             val p = candidate.preset
-            val trace = runCatching { diagnostics.start(feature, p) }.getOrNull()
-            kotlin.coroutines.coroutineContext[app.resound.topic.core.TopicRequestContext]?.let { t -> trace?.topic(t.id, t.phase, t.block, t.total) }
+            val trace = runCatching { diagnostics.start(feature, p) }.onFailure {
+                FailureNotes.record("digest/LlmFailover.kt:108", it)
+            }.getOrNull()
+            kotlin.coroutines.coroutineContext[TopicRequestContext]?.let { t -> trace?.topic(t.id, t.phase, t.block, t.total) }
             if (trace == null) call(p, candidate.key) else {
                 // 保持取消异常原对象，不让 withContext 复制异常。
                 var thrown: Throwable? = null
@@ -148,7 +159,7 @@ class LlmFailover(
         val (reply, actual) = execute(feature, session.primary, session.key, { !session.emitted }) { p, secret ->
             if (session.askFallback && tools.length() > 0) providers.askCompatibility.state(p).fallback?.let {
                 session.primary = p; session.key = secret
-                throw app.resound.ask.AskPrefetchRequired(it.reason, actualFailure = false)
+                throw AskPrefetchRequired(it.reason, actualFailure = false)
             }
             var prompt = 0L; var completion = 0L
             try {

@@ -57,11 +57,10 @@
 - 提交前跑 `python3 tools/check_shared.py` 和 `./gradlew :shared:check`。
 - 改了 `:shared` 或 `:devices` 的共用代码，提交前再跑 `zsh tools/check_ios.sh`（iOS 真机与模拟器编译检查，需本机已装 Xcode；脚本会自动清理 iOS 中间产物）。
 
-## 上游贡献约定（0xCoach/TaoSheng 复刻仓）
+## 为以后官方服务（按点数收费）预留（2026-11-15 起）
 
-本仓是 `0xCoach/TaoSheng` 的公开复刻，CI 接入 zlxlabs/gate-hub 的 Required Gate v2（Ref zlxlabs/gate-hub#2410）。
+以后会提供“涛声官方”转写/整理服务，按服务点数扣费；自己填密钥的方式永远保留。现在不实现，但新代码要守这三条：
 
-- 向上游贡献：从上游 `main` 新开分支，只带功能提交；不带 `.github/workflows/gate*.yml`、`scripts/gate-quality`、`mise.toml`、`.devcontainer/` 等 gate 附属文件（这些只属于本复刻）。
-- CI 分工：`gate` = 边界检查 + 模型主审（gate-hub v2）；`android.yml` / `ios.yml` = 编译与单测。
-- 合并前须绿：合并闸只要求 `gate / primary`，`Android 检查` 红不挡合并——合并前人工核对 Android/iOS 两个工作流在同一 head 上均为 SUCCESS。
-- 复刻与上游的 build 文件（`settings.gradle.kts`、`shared/`、`app/`、`devices/`、`tools/`）保持零分歧，避免两岸漂移。
+1. **不把“必须有密钥”写死**：判断能不能调用某个服务，统一走提供方/设置的入口（如 `canUseWithoutKey`、提供方选择），不要在各处自己判断“密钥是否为空”。
+2. **失败原因要能扩展**：整理、转写等结果和错误类型用可增加种类的枚举或密封类，调用方按种类处理；以后会加“需要登录 / 点数不足 / 已过期”，这些不能被当成“密钥错误”，自动任务遇到时按“需用户处理”对待。
+3. **保留每次请求的唯一凭据**：整理的进行中凭据（防重复付费）等“同一请求只算一次”的机制，重构时不能删掉或弱化；以后服务端靠它保证同一请求只扣一次点。

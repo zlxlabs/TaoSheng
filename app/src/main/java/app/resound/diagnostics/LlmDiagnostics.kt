@@ -1,5 +1,9 @@
 package app.resound.diagnostics
 
+import app.resound.diagnostics.FailureNotes
+
+import app.resound.digest.LlmInputLimitException
+
 import android.content.Context
 import android.content.SharedPreferences
 import app.resound.digest.LlmError
@@ -22,7 +26,9 @@ class LlmDiagnostics(context: Context) {
     internal fun save(row: JSONObject) { runCatching { synchronized(lock) {
         val rows = rows().filterNot { it.optString("id") == row.optString("id") } + row
         prefs.edit().putString("responses", JSONArray(rows.sortedBy { it.optLong("at") }.takeLast(20)).toString()).apply()
-    } } }
+    } }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:24", it)
+    } }
 
     internal fun rows(): List<JSONObject> = runCatching {
         val array = JSONArray(prefs.getString("responses", "[]"))
@@ -31,20 +37,26 @@ class LlmDiagnostics(context: Context) {
 
     internal fun abandoned(count: Int, at: Long) { runCatching {
         prefs.edit().putInt("abandonedCount", count).putLong("abandonedAt", at).apply()
+    }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:34", it)
     } }
 
     internal fun error(type: LlmError, at: Long) { runCatching {
         prefs.edit().putString("errorType", type.name).putLong("errorAt", at).apply()
+    }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:38", it)
     } }
 
     internal fun switched(at: Long, from: String, to: String, reason: String) { runCatching {
         prefs.edit().putString("switch", scrubProblemReport("时间=${stamp(at)} 主=$from → 备=$to 原因=$reason")).apply()
+    }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:42", it)
     } }
 
     internal fun state(): SharedPreferences = prefs
 
     internal fun dumpResponses(): String = rows().joinToString("\n") { row ->
-        listOf("at", "purpose", "provider", "model", "elapsedMs", "http", "finish_reason", "truncated",
+        listOf("at", "purpose", "provider", "model", "endpoint", "elapsedMs", "http", "finish_reason", "truncated",
             "chars", "json", "topic", "phase", "block", "blocks", "events", "items", "empty", "filtered", "error").joinToString(" ") { key ->
             "$key=${if (key == "at") stamp(row.optLong(key)) else if (row.isNull(key)) "暂无" else row.opt(key)}"
         }
@@ -66,6 +78,8 @@ class LlmResponseTrace internal constructor(
     private val row = JSONObject().put("id", UUID.randomUUID().toString()).put("at", System.currentTimeMillis())
         .put("purpose", feature.take(40)).put("provider", scrubProblemReport(preset.name).take(120))
         .put("model", scrubProblemReport(preset.model).take(120))
+        // 只记地址类型和短指纹，不记地址本身：换了地址指纹就变，能看出用的是新地址还是旧地址。
+        .put("endpoint", endpointFingerprint(preset.baseUrl))
 
     internal fun topic(id: Long, phase: String, block: Int, total: Int) = update {
         put("topic", id); put("phase", phase); put("block", block); put("blocks", total)
@@ -92,15 +106,19 @@ class LlmResponseTrace internal constructor(
             if (error != null) put("error", when (error) {
                 is LlmException -> error.type.name
                 is kotlinx.coroutines.CancellationException -> "Cancelled"
-                is app.resound.digest.LlmInputLimitException -> "InputLimit"
+                is LlmInputLimitException -> "InputLimit"
                 is java.io.IOException -> LlmError.Network.name
                 else -> "Local"
             })
         }
         persist()
     }
-    private fun update(block: JSONObject.() -> Unit) { runCatching { synchronized(this) { row.block() } } }
-    private fun persist() { runCatching { synchronized(this) { store.save(JSONObject(row.toString())) } } }
+    private fun update(block: JSONObject.() -> Unit) { runCatching { synchronized(this) { row.block() } }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:104", it)
+    } }
+    private fun persist() { runCatching { synchronized(this) { store.save(JSONObject(row.toString())) } }.onFailure {
+        FailureNotes.record("diagnostics/LlmDiagnostics.kt:105", it)
+    } }
 }
 
 internal fun responseObject(content: String): JSONObject? = runCatching {
@@ -112,4 +130,14 @@ internal fun validJson(content: String): Boolean = runCatching {
     val value = tokener.nextValue()
     value != null && tokener.nextClean() == '\u0000' &&
         (value !is String || content.trim().startsWith('"'))
+}.onFailure {
+    FailureNotes.record("diagnostics/LlmDiagnostics.kt:112", it)
 }.getOrDefault(false)
+
+/** 地址类型 + SHA-256 前 8 位；问题记录里不出现真实地址。 */
+internal fun endpointFingerprint(baseUrl: String): String {
+    val kind = runCatching { app.resound.transcribe.OpenAiEndpoint.kind(baseUrl).name }.getOrDefault("Unknown")
+    val hash = java.security.MessageDigest.getInstance("SHA-256").digest(baseUrl.trim().trimEnd('/').toByteArray())
+        .take(4).joinToString("") { "%02x".format(it) }
+    return "$kind-$hash"
+}

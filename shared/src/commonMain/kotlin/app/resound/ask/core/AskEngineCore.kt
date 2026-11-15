@@ -1,4 +1,6 @@
 package app.resound.ask.core
+
+import app.resound.diagnostics.FailureNotes
 import app.resound.ask.*
 import app.resound.net.*
 import app.resound.net.Arr as JSONArray
@@ -147,10 +149,14 @@ class AskEngineCore(
                             JSONObject().put("pending", true).put("summary", proposal!!.action.summary)
                                 .put("detail", proposal!!.action.detail).put("notice", "尚未修改数据，必须由用户在卡片上确认")
                         } else JSONObject(search(call.name, args.toString(), sources))
-                    } catch (_: AskArgumentFormatException) {
+                    } catch (caught: AskArgumentFormatException) {
+                        FailureNotes.record("ask/core/AskEngineCore.kt:150", caught)
+
                         reply.diagnostics?.parsed(items = reply.calls.size, empty = false, error = NetLlmError.Format)
                         JSONObject().put("error", "参数无效，请检查日期与工具参数")
-                    } catch (_: IllegalArgumentException) {
+                    } catch (caught: IllegalArgumentException) {
+                        FailureNotes.record("ask/core/AskEngineCore.kt:153", caught)
+
                         JSONObject().put("error", "参数无效，请检查日期与工具参数")
                     }
                 }
@@ -193,7 +199,6 @@ class AskEngineCore(
     private fun progress(name: String, args: JSONObject): String {
         val keyword = args.optJSONArray("keywords")?.optString(0)?.take(16)?.takeIf { it.isNotBlank() }
         return when {
-            name == "apps_during" -> "正在查手机使用记录…"
             name == "get_day" -> "正在翻 ${args.optString("date").take(10)} 的记录…"
             keyword != null -> "正在找关于‘$keyword’的${if (name == "search_lines") "原话" else "事"}…"
             name == "search_lines" -> "正在翻${args.optString("from").take(16)}的原话…"

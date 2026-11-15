@@ -28,8 +28,6 @@ data class SegmentWithLines(@Embedded val segment: SegmentEntity,
 data class QueueCounts(val pending: Int, val failed: Int, val running: Boolean)
 data class VoiceprintCounts(val processed: Int, val pending: Int)
 data class AsrUsageTotals(val todayMillis: Long, val totalMillis: Long)
-/** 手机麦克风片段的外放毫秒数快照，供整理提示标注外放。 */
-data class SegmentPlayback(val id: Long, val playbackMillis: Long)
 
 @Dao
 abstract class TranscribeDao {
@@ -110,6 +108,8 @@ abstract class TranscribeDao {
     /** 还没转写的录音总时长（毫秒），决定是否提前转写 */
     @Query("SELECT COALESCE(SUM(endAt - startAt), 0) FROM segments WHERE status = 'Pending'")
     abstract suspend fun pendingMillis(): Long
+    @Query("SELECT COALESCE(SUM(endAt - startAt), 0) FROM segments WHERE status = 'Pending' OR (status = 'Failed' AND attempts < 5)")
+    abstract fun observePendingMillis(): Flow<Long>
     @Query("SELECT MIN(nextRetryAt) FROM segments WHERE status = 'Failed' AND attempts < 5 AND nextRetryAt IS NOT NULL")
     abstract suspend fun earliestRetry(): Long?
     // Running 的尝试未完成，不占失败次数；已发送的用量仍保留，第五次中断也可恢复。
@@ -157,12 +157,8 @@ abstract class TranscribeDao {
     @Query("DELETE FROM segments WHERE id = :id")
     abstract suspend fun deleteSegmentRow(id: Long)
 
-    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = 1 WHERE id = :id AND status = 'SkippedPlayback'")
+    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL WHERE id = :id AND status = 'SkippedPlayback'")
     abstract suspend fun transcribeAnyway(id: Long): Int
-
-    /** 卡 191a：放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
-    @Query("UPDATE segments SET playbackDigest = 2 WHERE id = :id AND playbackDigest = 1")
-    abstract suspend fun allowPlaybackDigest(id: Long): Int
     @Query("SELECT COUNT(*) FROM segments WHERE status = 'SkippedPlayback'")
     abstract suspend fun skippedPlaybackCount(): Int
     @Query("UPDATE segments SET status = 'SkippedEnv', completedAt = :at, nextRetryAt = NULL, error = NULL, voiceprintProcessedAt = :at WHERE id = :id AND status = 'Running' AND NOT EXISTS (SELECT 1 FROM env_sounds WHERE segmentId = :id AND (restored = 1 OR reportedWrong = 1))")
@@ -173,9 +169,6 @@ abstract class TranscribeDao {
     abstract suspend fun topicTraining(id: Long)
     @Query("SELECT id FROM segments WHERE id IN (:ids) AND separateSpeakers = 0 AND (importChannel IS NULL OR speakerCount = 0)")
     abstract suspend fun unseparated(ids: List<Long>): List<Long>
-    /** 外放提示只认手机麦克风片段；阈值判定在 SituationPrompt，这里不按毫秒数过滤。 */
-    @Query("SELECT id, playbackMillis FROM segments WHERE id IN (:ids) AND sourceId = 'mic'")
-    abstract suspend fun playbackMillis(ids: List<Long>): List<SegmentPlayback>
     @Update abstract suspend fun update(row: SegmentEntity)
     @Query("SELECT * FROM segments WHERE id = :id") abstract suspend fun findSegment(id: Long): SegmentEntity?
     @Query("UPDATE segments SET status = 'Running', attempts = attempts + 1, nextRetryAt = NULL, error = NULL WHERE id = :id AND status IN ('Pending', 'Failed')")

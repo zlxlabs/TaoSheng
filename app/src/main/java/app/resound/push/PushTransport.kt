@@ -1,5 +1,9 @@
 package app.resound.push
 
+import app.resound.diagnostics.FailureNotes
+
+import app.resound.review.DailyReview
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -19,12 +23,10 @@ import javax.crypto.spec.SecretKeySpec
 
 internal class PushFailure(message: String) : IOException(message)
 internal data class PushMessage(val title: String, val body: String, val topic: PushTopic?, val deepLink: String?, val at: Long,
-    val review: app.resound.review.DailyReview? = null, val memory: JSONObject? = null,
+    val review: DailyReview? = null, val memory: JSONObject? = null,
     val memoryDate: String? = null, val memoryWithLines: Boolean = false,
     /** 每日足迹的结构化数据（Webhook / JSON 才会带出去） */
-    val footprint: JSONObject? = null,
-    /** 每日屏幕时间的结构化数据（Webhook / JSON 才会带出去） */
-    val screenTime: JSONObject? = null) {
+    val footprint: JSONObject? = null) {
     fun rendered(format: PushFormat): String = review?.pushBody(format) ?: PushTransport.renderedBody(body, format)
     // 内部重试快照与对外协议分开；快照保留完整文档，不在重试时改变日期或带原话选项。
     fun json() = JSONObject().put("title", title).put("body", body).put("topic", topic?.name ?: JSONObject.NULL)
@@ -32,14 +34,12 @@ internal data class PushMessage(val title: String, val body: String, val topic: 
             review?.let { put("review", it.pushJson()) }; memory?.let { put("memory", it) }
             memoryDate?.let { put("memoryDate", it).put("memoryWithLines", memoryWithLines) }
             footprint?.let { put("footprint", it) }
-            screenTime?.let { put("screenTime", it) }
         }
     fun envelope(format: PushFormat): JSONObject = memory?.let { JSONObject(it.toString()) } ?: json().put("body", rendered(format))
         .put("type", when (topic) {
             PushTopic.DailyReview -> "daily_review"; PushTopic.TodoReminder -> "todo_reminder"
             PushTopic.NewEvent -> "new_event"; PushTopic.SkillCard -> "skill_card"
-            PushTopic.DailyMemory -> "daily_memory"; PushTopic.Footprint -> "footprint"
-            PushTopic.ScreenTime -> "screen_time"; null -> "test"
+            PushTopic.DailyMemory -> "daily_memory"; PushTopic.Footprint -> "footprint"; null -> "test"
         }).put("version", 1).put("app", "resound")
     companion object {
         fun from(json: JSONObject) = PushMessage(json.getString("title"), json.getString("body"),
@@ -47,7 +47,7 @@ internal data class PushMessage(val title: String, val body: String, val topic: 
             if (json.isNull("deepLink")) null else json.getString("deepLink"), json.getLong("at"),
             json.optJSONObject("review")?.let(::reviewFromPushJson), json.optJSONObject("memory"),
             if (json.isNull("memoryDate")) null else json.getString("memoryDate"), json.optBoolean("memoryWithLines", false),
-            json.optJSONObject("footprint"), json.optJSONObject("screenTime"))
+            json.optJSONObject("footprint"))
     }
 }
 
@@ -109,7 +109,6 @@ internal class PushTransport(private val client: OkHttpClient = OkHttpClient(), 
                         ?: "${message.title}\n${message.rendered(PushFormat.Text)}", PushFormat.Text)
                 }, format)
                 val date = message.review?.date?.toString() ?: message.memoryDate
-                    ?: message.screenTime?.optString("date")?.takeIf(String::isNotBlank)
                     ?: message.memory?.optString("date")?.takeIf(String::isNotBlank)
                     ?: Instant.ofEpochMilli(now()).atZone(ZoneId.systemDefault()).toLocalDate().toString()
                 builder.header("X-Resound-Type", envelope.getString("type"))
@@ -117,7 +116,8 @@ internal class PushTransport(private val client: OkHttpClient = OkHttpClient(), 
                     .header("X-Resound-Title", URLEncoder.encode(message.title, "UTF-8"))
                 values["signSecret"]?.takeIf(String::isNotBlank)?.let {
                     val timestamp = (now() / 1000).toString()
-                    builder.header("X-Resound-Timestamp", timestamp).header("X-Resound-Signature", "sha256=" + hmac(it, "$timestamp.$content").joinToString("") { b -> "%02x".format(b.toInt() and 255) })
+                    builder.header("X-Resound-Timestamp", timestamp).header("X-Resound-Signature", "sha256=" + hmac(it, "$timestamp.$content").joinToString(
+                        "") { b -> "%02x".format(b.toInt() and 255) })
                 }
                 content.toRequestBody(when (format) {
                     PushFormat.Json -> "application/json; charset=utf-8"
@@ -144,7 +144,8 @@ internal class PushTransport(private val client: OkHttpClient = OkHttpClient(), 
                     url.setQueryParameter("timestamp", timestamp.toString()).setQueryParameter("sign", dingTalkSign(timestamp, secret))
                 }
                 builder.url(url.build())
-                if (markdown) JSONObject().put("msgtype", "markdown").put("markdown", JSONObject().put("title", message.title).put("text", layout("## ${message.title}\n\n${message.rendered(PushFormat.Markdown)}"))).body()
+                if (markdown) JSONObject().put("msgtype", "markdown").put("markdown", JSONObject().put("title", message.title).put("text", layout("## ${message
+                    .title}\n\n${message.rendered(PushFormat.Markdown)}"))).body()
                 else JSONObject().put("msgtype", "text").put("text", JSONObject().put("content", layout("${message.title}\n${message.rendered(format)}"))).body()
             }
             PushKind.Telegram -> {
@@ -153,7 +154,8 @@ internal class PushTransport(private val client: OkHttpClient = OkHttpClient(), 
                     builder.url("$base/bot${values.getValue("token")}/sendDocument")
                     MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("chat_id", values.getValue("chatId"))
                         .addFormDataPart("caption", truncate(message.body, 1000))
-                        .addFormDataPart("document", "记忆-${message.memory.getString("date")}.md", message.memory.getString("markdown").toRequestBody("text/markdown; charset=utf-8".toMediaType())).build()
+                        .addFormDataPart("document", "记忆-${message.memory.getString("date")}.md", message.memory.getString("markdown").toRequestBody(
+                            "text/markdown; charset=utf-8".toMediaType())).build()
                 } else {
                     builder.url("$base/bot${values.getValue("token")}/sendMessage")
                     // 先限制可见字符，再转义，保证不会截断 HTML 实体或标签。
@@ -230,7 +232,9 @@ internal class PushHttp(client: OkHttpClient, private val kind: PushKind? = null
         if (!response.isSuccessful && response.code !in allowed) {
             val conclusion = PushErrors.status(response.code, kind == PushKind.MarkdownFolder)
             // 非成功响应也可能包含服务原因；只读有限字节，绝不回显原响应。
-            val json = runCatching { JSONObject(response.peekBody(65536).string()) }.getOrNull()
+            val json = runCatching { JSONObject(response.peekBody(65536).string()) }.onFailure {
+                FailureNotes.record("push/PushTransport.kt:233", it)
+            }.getOrNull()
             val reason = if (kind != null && kind !in setOf(PushKind.Webhook, PushKind.MarkdownFolder) && json != null)
                 PushErrors.refused(kind, json, values) else null
             throw PushFailure(conclusion + (reason?.let { "；$it" } ?: ""))

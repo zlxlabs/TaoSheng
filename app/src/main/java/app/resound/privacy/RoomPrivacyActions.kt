@@ -1,5 +1,10 @@
 package app.resound.privacy
 
+import app.resound.diagnostics.FailureNotes
+
+import app.resound.data.PrivacyFileCleanup
+import app.resound.transcribe.SegmentDeleter
+
 import app.resound.data.writeTransaction
 import app.resound.data.CaptureDatabase
 import app.resound.data.SegmentEntity
@@ -25,7 +30,7 @@ class RoomPrivacyActions(
     private val diagnostic: (String) -> Unit = { android.util.Log.w("Privacy", it); Unit },
     private val scheduleCleanup: () -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
-) : PrivacyActions, app.resound.transcribe.SegmentDeleter {
+) : PrivacyActions, SegmentDeleter {
     private val gate = Mutex()
     private val dao = db.privacy()
     private val requests = mutableMapOf<Long, CompletableDeferred<ForgetResult>>()
@@ -38,7 +43,7 @@ class RoomPrivacyActions(
             val until = now()
             val from = PrivacyRules.recentStart(minutes, until)
             discardRecording()
-            recentFiles(from, until) { erase(screenRange = from to until) { dao.recent(from, until) } }
+            recentFiles(from, until) { erase { dao.recent(from, until) } }
         } }
     }
 
@@ -46,7 +51,7 @@ class RoomPrivacyActions(
         PrivacyRules.validateRange(fromMillis, untilMillis)
         return withContext(Dispatchers.IO + NonCancellable) { gate.withLock {
             if (PrivacyRules.discardRecording(untilMillis, now())) discardRecording()
-            recentFiles(fromMillis, untilMillis) { erase(screenRange = fromMillis to untilMillis) { dao.recent(fromMillis, untilMillis) } }
+            recentFiles(fromMillis, untilMillis) { erase { dao.recent(fromMillis, untilMillis) } }
         } }
     }
 
@@ -96,7 +101,6 @@ class RoomPrivacyActions(
     }
 
     private suspend fun erase(explicitEvent: Long? = null, keepEvents: Boolean = false,
-                              screenRange: Pair<Long, Long>? = null,
                               onStage: (EventDeletionPhase) -> Unit = {}, select: suspend () -> List<SegmentEntity>): ForgetResult {
         onStage(EventDeletionPhase.WaitingForAudio)
         return voiceprintGuard {
@@ -115,7 +119,7 @@ class RoomPrivacyActions(
                     val source = db.voiceprint().lines(segment.id)
                     files += segment to source
                     if (PrivacyRules.cleanupFile(segment.path, segment.sourceId))
-                        dao.queueCleanup(app.resound.data.PrivacyFileCleanup(segment.path))
+                        dao.queueCleanup(PrivacyFileCleanup(segment.path))
                     val target = if (explicitEvent == null) source else source.filter { it.eventId == explicitEvent }
                     events += target.mapNotNull { it.eventId }
                     dao.deleteSamples(segment.id)
@@ -139,16 +143,12 @@ class RoomPrivacyActions(
                     deletedEvents += dao.deleteEvent(id)
                 }
                 if (!keepEvents) db.memory().repairMergedItems()
-                // 卡 185b：按时间遗忘时屏幕时间原始事件一并删除，删除下限提到区间终点，防被拉取拉回。
-                screenRange?.let { (from, until) ->
-                    db.screenTime().deleteEvents(from, until)
-                    db.screenTime().forgetPlayback(from, until)
-                    db.screenTime().raiseFloor(app.resound.screentime.SCREEN_SOURCE, until)
-                }
                 ForgetResult(deletedSegments, lines, deletedEvents, items)
             }
             onStage(EventDeletionPhase.Files)
-            if (files.isNotEmpty()) runCatching { scheduleCleanup() }
+            if (files.isNotEmpty()) runCatching { scheduleCleanup() }.onFailure {
+                FailureNotes.record("privacy/RoomPrivacyActions.kt:147", it)
+            }
             for ((segment, lines) in files) {
                 cleanup("声纹缓存删除失败") { removeFeatures(segment, lines) }
             }
@@ -166,13 +166,17 @@ class RoomPrivacyActions(
                 check(file.delete() || !file.exists())
                 dao.cleaned(row.path)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-              catch (_: Exception) { complete = false; diagnostic("录音文件删除失败") }
+              catch (caught: Exception) {
+                  FailureNotes.record("privacy/RoomPrivacyActions.kt:165", caught)
+                  complete = false; diagnostic("录音文件删除失败") }
         }
         complete
     }
 
     private fun cleanup(message: String, block: () -> Unit) {
-        try { block() } catch (_: Exception) { diagnostic(message) } // 不记录路径、原话或异常原文。
+        try { block() } catch (caught: Exception) {
+            FailureNotes.record("privacy/RoomPrivacyActions.kt:171", caught)
+            diagnostic(message) } // 不记录路径、原话或异常原文。
     }
 }
 

@@ -1,5 +1,9 @@
 package app.resound.devices.android
 
+import app.resound.diagnostics.FailureNotes
+
+import app.resound.devices.driver.DriverCatalog
+
 import app.resound.audio.*
 import app.resound.devices.*
 import app.resound.devices.card.*
@@ -22,6 +26,8 @@ internal interface PairedDeviceStore {
 
 /** 注册表由装配层提供；卡片只为旧蓝牙连接工厂提供链路参数。 */
 internal data class RegisteredDriver(val driver: DeviceDriver, val transport: DeviceCard)
+internal data class ManualSyncState(val running: Boolean, val pausing: Boolean = false, val message: String? = null,
+                                    val errorCode: ErrorCode? = null)
 
 /** 旧界面/AudioSource 到设备中枢的兼容层。仅指定设备且正在录音时建立中枢生命周期。 */
 internal class DeviceInputs(
@@ -67,6 +73,10 @@ internal class DeviceInputs(
     override val found = discoveries.asStateFlow()
     private val error = MutableStateFlow<String?>(null)
     val lastError = error.asStateFlow()
+    private data class ManualSyncEntry(val task: Job, val state: ManualSyncState)
+    private val syncTasks = MutableStateFlow<Map<String, ManualSyncEntry>>(emptyMap())
+    val manualSyncStates = syncTasks.map { rows -> rows.mapValues { it.value.state } }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
     private val selected = MutableStateFlow<String?>(null)
     private val active = MutableStateFlow(false)
     private val stream = MutableStateFlow<Feed?>(null)
@@ -120,7 +130,7 @@ internal class DeviceInputs(
         val card = registeredDriver?.transport ?: installed.first { it.card.id == row.cardId }.card
         val driverId = registeredDriver?.driver?.meta?.id ?: "card:${card.id}"
         val ports = MutableStateFlow<Port?>(null)
-        val catalog = object : app.resound.devices.driver.DriverCatalog {
+        val catalog = object : DriverCatalog {
             override val drivers = installed.map { item -> CardDriver(item.card, true,
                 plugins.firstOrNull { it.id == item.card.filePlugin },
                 report = { report(row.address, it) }, readTimeout = CaptureHealth.STALL_MS,
@@ -236,7 +246,9 @@ internal class DeviceInputs(
                 sync.cancelAndJoin()
                 if (failure != null) gap(row.address, port.disconnectedAt.value ?: clock.nowEpochMillis())
                 // 不重新申请租约，物理断开时旧连接已不在中枢；stop 仅取消本连接的声音流。
-                runCatching { live?.stop() }
+                runCatching {
+                    // 仅释放/清除临时资源；失败不改变已确定的业务结果，可忽略。
+                     live?.stop() }
             }
             update(row.address) { it.copy(status = if (failure == null) DeviceStatus.Disconnected else DeviceStatus.Waiting,
                 backfill = null, lastError = failure?.message ?: it.lastError) }
@@ -250,7 +262,9 @@ internal class DeviceInputs(
         if (cachedStatus.value[address] == status) return
         cachedStatus.update { it + (address to status) }
         val key = selection.deviceId?.let { "id:${it.value}" } ?: "handle:$address"
-        runCatching { repository.store(selection.driverId,key).putString("lastStatus",DeviceStatusCache.encode(status)) }
+        runCatching { repository.store(selection.driverId,key).putString("lastStatus",DeviceStatusCache.encode(status)) }.onFailure {
+            FailureNotes.record("devices/android/DeviceInputs.kt:261", it)
+        }
     }
     private fun render(address: String, device: HubDevice) {
         cacheStatus(address,device.status)
@@ -330,7 +344,7 @@ internal class DeviceInputs(
             val card = registration?.transport ?: installed.firstOrNull { it.card.id == row.cardId }?.card
                 ?: throw DeviceException(ErrorCode.NotFound)
             val id = registration?.driver?.meta?.id ?: "card:${card.id}"
-            val catalog = object : app.resound.devices.driver.DriverCatalog {
+            val catalog = object : DriverCatalog {
                 override val drivers = installed.map { item -> CardDriver(item.card,true,plugins.firstOrNull { it.id == item.card.filePlugin }) } + registered.map { it.driver }
             }
             coroutineScope {
@@ -358,6 +372,50 @@ internal class DeviceInputs(
             }
             } finally { mutex.unlock() }
         }
+    }
+
+    /** 手动补传由应用持有；关闭详情不取消，暂停则等待连接清理并保留续传记录。 */
+    fun startSyncDevice(address: String) {
+        var message = "离线录音已检查完；未成功的任务可再次检查"
+        var errorCode: ErrorCode? = null
+        val task = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                syncDevice(address)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: DeviceException) {
+                errorCode = e.code
+                message = "检查没有完成，已保留进度，请稍后重试"
+            } catch (caught: Exception) {
+                FailureNotes.record("devices/android/DeviceInputs.kt:383", caught)
+
+                message = "检查没有完成，已保留进度，请稍后重试"
+            }
+        }
+        while (true) {
+            val old = syncTasks.value
+            if (old[address]?.state?.running == true) { task.cancel(); return }
+            if (syncTasks.compareAndSet(old, old + (address to ManualSyncEntry(task, ManualSyncState(true))))) break
+        }
+        task.invokeOnCompletion { cause ->
+            if (cause is CancellationException) {
+                message = "补传已暂停，已保存的进度会在下次检查时继续"
+                errorCode = null
+            }
+            update(address) { it.copy(backfill = null) }
+            syncTasks.update { rows ->
+                if (rows[address]?.task === task) rows + (address to ManualSyncEntry(task, ManualSyncState(false, message = message, errorCode = errorCode))) else rows
+            }
+        }
+        task.start()
+    }
+
+    fun pauseSyncDevice(address: String) {
+        val entry = syncTasks.value[address]?.takeIf { it.state.running } ?: return
+        syncTasks.update { rows ->
+            if (rows[address] === entry) rows + (address to entry.copy(state = entry.state.copy(pausing = true))) else rows
+        }
+        entry.task.cancel()
     }
 
     /** 显式检查已保存录音；即使关闭自动补传也执行，设备录音中由驱动返回 StateConflict。 */
@@ -493,6 +551,7 @@ internal class DeviceInputs(
         job.start()
     }
     override fun forget(address: String) {
+        pauseSyncDevice(address)
         pairing.getAndUpdate { it - address }[address]?.cancel()
         scope.launch {
             savedLock.withLock {

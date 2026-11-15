@@ -62,7 +62,6 @@ private object Tints {
     // 记录：暖色系
     val capture = Color(0xFFF07B2E); val devices = Color(0xFFF2994A); val transcript = Color(0xFFE0A030)
     val voiceprint = Color(0xFFE06A50); val env = Color(0xFFD4A017); val location = Color(0xFFC9643A)
-    val screenTime = Color(0xFFB07048)
     // 整理：紫蓝系
     val model = Color(0xFF7C5CC4); val skills = Color(0xFF5B5BD6); val push = Color(0xFF3B82C4)
     // 数据：绿
@@ -184,11 +183,6 @@ internal fun SettingsList(
                     Divider()
                     SRow(SettingsGlyph.Pin, Tints.location, "足迹", if (locOn) "记录全天位置" else "未开启") { onOpen(SettingsPage.Location) }
                 }
-                if (AppGraph.isScreenTimeReady) {
-                    val stOn = AppGraph.screenTimeSettings.enabled.collectAsStateWithLifecycle().value
-                    Divider()
-                    SRow(SettingsGlyph.Clock, Tints.screenTime, "屏幕时间", if (stOn) "记录每天用了哪些 App" else "未开启") { onOpen(SettingsPage.ScreenTime) }
-                }
             }
         }
         // ---------- 整理 ----------
@@ -259,7 +253,7 @@ internal fun SettingsList(
         }
         item {
             Group {
-                SRow(SettingsGlyph.Tool, Tints.advanced, "高级与诊断", "整理要求 · 运行记录") { onOpen(SettingsPage.Advanced) }
+                SRow(SettingsGlyph.Tool, Tints.advanced, "高级与诊断", "运行记录 · 导出问题记录") { onOpen(SettingsPage.Advanced) }
             }
         }
     }

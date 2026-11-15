@@ -115,7 +115,7 @@ internal object SettingsIndex {
             item("运行记录", "runs", "任务记录 处理记录 整理失败")
             item("守护记录", "watchdog", "被系统杀 重启记录 中断记录 自动恢复")
             item("麦克风占用", "mic-busy", "谁占麦 其他应用 没声音 占用记录")
-            item("导出日志", "export-logs", "问题记录 闪退 反馈 诊断文件")
+            item("导出问题记录", "export-logs", "诊断记录 日志 闪退 反馈 诊断文件")
             item("日间 / 夜间", "appearance", "主题 深色模式 浅色模式 跟随系统 外观")
         }
         page("Update", "版本更新", "升级 新版本 下载更新") {
@@ -125,7 +125,7 @@ internal object SettingsIndex {
         }
         page("About", "关于涛声", "关于 版本信息 帮助") {
             item("隐私说明", "privacy", "数据安全 密钥安全 上传哪些")
-            item("项目主页", "homepage", "开源 GitHub 源码 MIT")
+            item("项目主页", "homepage", "开源 源码公开 GitHub FSL MIT 许可")
             item("接收预览版", "preview", "测试版 抢先体验 preview 内测")
         }
     }

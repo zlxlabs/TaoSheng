@@ -1,5 +1,7 @@
 package app.resound.transcribe
 
+import app.resound.digest.HeaderEntry
+
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.datetime.LocalDate
@@ -77,8 +79,6 @@ data class SegmentTranscript(
     val error: String? = null,
     /** 录音文件是否还在（转写成功 1 天后删除） */
     val audioAvailable: Boolean,
-    /** 外放时录的片段被用户「仍要转写」后：转写保留、可搜可问，但暂不参与整理，等用户在界面上放行 */
-    val playbackHeld: Boolean = false,
 )
 
 data class TranscribeQueueState(
@@ -113,9 +113,6 @@ interface TranscriptRepository {
     /** 外放时录的片段，用户要求仍然转写：放回队列并立即跑一轮 */
     fun transcribeAnyway(segmentId: Long) {}
 
-    /** 外放片段放行整理：[SegmentTranscript.playbackHeld] 的片段改为参与整理，等下一轮整理（自动或「现在整理」）处理；不主动触发整理 */
-    fun allowPlaybackDigest(segmentId: Long) {}
-
     /** 卡 065：忽略现在提醒里的所有失败段（变成 Quiet，不再计入 failed），以后仍可手动重试 */
     fun ignoreFailed() {}
 
@@ -132,8 +129,8 @@ const val MIN_INTERVAL = 15
 const val MAX_INTERVAL = 720
 
 interface TranscribeSettings {
-    fun headers(presetId: String): List<app.resound.digest.HeaderEntry> = emptyList()
-    fun saveHeaders(presetId: String, headers: List<app.resound.digest.HeaderEntry>) {}
+    fun headers(presetId: String): List<HeaderEntry> = emptyList()
+    fun saveHeaders(presetId: String, headers: List<HeaderEntry>) {}
     /** 是否已填密钥 */
     val hasKey: StateFlow<Boolean>
 

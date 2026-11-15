@@ -1,8 +1,5 @@
 package app.resound.context
 
-import app.resound.screentime.DevicePlayback
-import app.resound.screentime.NamedAppSession
-
 /*
  * 卡 130/131：声音、位置、环境音按时间联动。界面（Claude）与整理、问问只依赖这里；底层（Codex）实现。
  * 三者共用同一条时间线（毫秒时间戳），按时间段重叠对齐。全部在手机本地计算，不联网。
@@ -31,10 +28,4 @@ interface SituationLookup {
 
     /** [from, to) 内在名叫 [placeName] 的地方（名字包含即可，不区分大小写）停留的时间段，按时间排 */
     suspend fun staysAt(placeName: String, from: Long, to: Long): List<PlaceAt>
-
-    /** [from, until) 内手机前台使用段（卡 186c）；屏幕时间未装配或关闭时返回空。已脱敏的 [NamedAppSession.name]。 */
-    suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = emptyList()
-
-    /** [from, until) 内设备播放记录（卡 190）；屏幕时间未装配、关闭或没有通知使用权时返回空。 */
-    suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> = emptyList()
 }

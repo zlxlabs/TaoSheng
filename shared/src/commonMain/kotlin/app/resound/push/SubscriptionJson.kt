@@ -1,5 +1,7 @@
 package app.resound.push
 
+import app.resound.diagnostics.FailureNotes
+
 import kotlinx.serialization.json.*
 
 object SubscriptionJson {
@@ -21,7 +23,6 @@ object SubscriptionJson {
         put("backfillDays", s.backfillDays?.let(::JsonPrimitive) ?: JsonNull); put("lineContext", s.lineContext)
         put("audio", s.audio.name); put("audioWithText", s.audioWithText); put("audioWifiOnly", s.audioWifiOnly)
         put("footprint", s.footprint); put("footprintAt", s.footprintAt)
-        put("screenTime", s.screenTime); put("screenTimeAt", s.screenTimeAt)
     }
     fun read(j: JsonObject): PushSubscription {
         fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
@@ -41,7 +42,8 @@ object SubscriptionJson {
             j.flag("excludeMedia"), j.number("backfillDays"), lineContext = j.flag("lineContext", true),
             audio = AudioPush.entries.find { it.name == j["audio"]?.jsonPrimitive?.content } ?: AudioPush.Off,
             audioWithText = j.flag("audioWithText", true), audioWifiOnly = j.flag("audioWifiOnly", true),
-            footprint = j.flag("footprint", false), footprintAt = (runCatching { j.number("footprintAt") }.getOrNull() ?: 22 * 60).coerceIn(0, 1439),
-            screenTime = j.flag("screenTime", false), screenTimeAt = (runCatching { j.number("screenTimeAt") }.getOrNull() ?: 22 * 60).coerceIn(0, 1439))
+            footprint = j.flag("footprint", false), footprintAt = (runCatching { j.number("footprintAt") }.onFailure {
+                FailureNotes.record("push/SubscriptionJson.kt:43", it)
+            }.getOrNull() ?: 22 * 60).coerceIn(0, 1439))
     }
 }

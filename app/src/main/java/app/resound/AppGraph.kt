@@ -13,13 +13,6 @@ import app.resound.transcribe.TranscriptRepository
  * 底层实现完成前，界面用 ui/preview 里的假数据开发。
  */
 object AppGraph {
-    /** 启动时从平台 KeyValueStore 读取一次；修改后重启生效。 */
-    internal var legacyNetwork: Boolean = false
-        private set
-    internal fun configureNetwork(store: app.resound.platform.KeyValueStore) {
-        legacyNetwork = store.getBoolean("net.legacy_okhttp", false)
-    }
-
     lateinit var platform: app.resound.platform.PlatformServices
     val isPlatformReady: Boolean get() = ::platform.isInitialized
 
@@ -86,15 +79,6 @@ object AppGraph {
     lateinit var situation: app.resound.context.SituationLookup
     val isSituationReady: Boolean get() = ::situation.isInitialized
     val isLocationReady: Boolean get() = ::location.isInitialized
-
-    /** 卡 185b：屏幕时间采集底座（默认关；开关与拉取器查询前共用同一 Mutex） */
-    lateinit var screenTimeSettings: app.resound.screentime.ScreenTimeSettings
-    lateinit var screenTimePuller: app.resound.screentime.ScreenTimePuller
-    val isScreenTimeReady: Boolean get() = ::screenTimePuller.isInitialized
-    /** 屏幕时间读取入口（卡 186c 装配）；为 null 时消费方按总开关关闭处理（ScreenTimeResult.DISABLED）。 */
-    @Volatile var screenTimeReader: app.resound.screentime.ScreenTimeReader? = null
-    /** 设备播放记录接收方（卡 190 装配）；为 null 时通知监听服务丢弃回调。 */
-    @Volatile var playbackSink: app.resound.screentime.PlaybackSink? = null
 
     // 卡 079：寻物
     lateinit var things: app.resound.things.ThingRepository

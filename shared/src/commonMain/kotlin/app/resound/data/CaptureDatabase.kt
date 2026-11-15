@@ -1,11 +1,50 @@
 package app.resound.data
 
+import app.resound.devices.DeviceSyncStore
+import app.resound.devices.DeviceTransfer
+import app.resound.envsound.EnvSoundDao
+import app.resound.envsound.EnvSoundRow
+import app.resound.importer.FolderImportDao
+import app.resound.importer.FolderObservation
+import app.resound.importer.ImportFingerprint
+import app.resound.importer.ImportRecordDao
+import app.resound.importer.ImportRecordRow
+import app.resound.importer.ImportRecordSchema
+import app.resound.location.LocationDao
+import app.resound.location.LocationPoint
+import app.resound.location.LocationSchema
+import app.resound.location.PlaceDao
+import app.resound.location.PlaceRow
+import app.resound.location.PlaceSchema
+import app.resound.push.PushDao
+import app.resound.redo.RedoDao
+import app.resound.redo.RedoSnapshotRow
+import app.resound.search.EmbeddingEntity
+import app.resound.search.EventFts
+import app.resound.search.ItemFts
+import app.resound.search.LineFts
+import app.resound.search.SearchIndex
+import app.resound.skills.SkillCardRow
+import app.resound.skills.SkillDao
+import app.resound.skills.SkillRunRow
+import app.resound.things.ThingDao
+import app.resound.things.ThingRecordRow
+import app.resound.things.ThingRow
+import app.resound.things.ThingSchema
+import app.resound.things.ThingWatchState
+import app.resound.topic.TopicDao
+import app.resound.topic.TopicMarkRow
+import app.resound.topic.TopicRow
+import app.resound.topic.TopicSchema
+import app.resound.topic.TopicSpanRow
+
 import androidx.sqlite.execSQL
 import androidx.room.*
 import androidx.room.migration.Migration
 import kotlinx.coroutines.flow.Flow
 
-@Entity(tableName = "segments", indices = [Index("startAt"), Index(value = ["path"], unique = true), Index("importRecordId"), Index(value = ["status", "voiceprintProcessedAt"])], foreignKeys = [ForeignKey(entity = app.resound.importer.ImportRecordRow::class, parentColumns = ["id"], childColumns = ["importRecordId"], onDelete = ForeignKey.SET_NULL)])
+@Entity(tableName = "segments", indices = [Index("startAt"), Index(value = ["path"], unique = true), Index("importRecordId"), Index(value = ["status",
+    "voiceprintProcessedAt"])], foreignKeys = [ForeignKey(entity = ImportRecordRow::class, parentColumns = ["id"], childColumns = ["importRecordId"], onDelete = ForeignKey.SET_NULL)])
 data class SegmentEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val startAt: Long, val endAt: Long,
     val sourceId: String, val path: String, val sizeBytes: Long, val status: String = "Pending",
     @ColumnInfo(defaultValue = "0") val attempts: Int = 0,
@@ -13,9 +52,7 @@ data class SegmentEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val 
     val logId: String? = null, @ColumnInfo(defaultValue = "0") val sentMillis: Long = 0, val voiceprintProcessedAt: Long? = null,
     @ColumnInfo(defaultValue = "0") val playbackMillis: Long = 0, val firstFailedAt: Long? = null, val asrSource: String? = null, @ColumnInfo(defaultValue = "0") val redoPending: Boolean = false,
     /** null 为升级前尚未确定；首次转写按录音开始时刻固化。 */
-    val separateSpeakers: Boolean? = null, val importRecordId: Long? = null, val importChannel: Int? = null, val speakerCount: Int? = null,
-    /** 外放「仍要转写」片段的整理闸：0 正常；1 暂不参与整理；2 用户已放行。 */
-    @ColumnInfo(defaultValue = "0") val playbackDigest: Int = 0)
+    val separateSpeakers: Boolean? = null, val importRecordId: Long? = null, val importChannel: Int? = null, val speakerCount: Int? = null)
 @Entity(tableName = "watchdog", indices = [Index("at")])
 data class EventEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val at: Long, val type: String,
     val detail: String?, val batteryPercent: Int?, val charging: Boolean?, val gapStart: Long? = null, val gapEnd: Long? = null)
@@ -54,27 +91,28 @@ interface CaptureDao {
     fun batteries(start: Long, end: Long): Flow<List<BatteryEntity>>
 }
 
-@Database(entities = [app.resound.topic.TopicRow::class, app.resound.topic.TopicSpanRow::class, app.resound.topic.TopicMarkRow::class, app.resound.devices.DeviceTransfer::class, app.resound.importer.ImportFingerprint::class, app.resound.importer.FolderObservation::class, PrivacyFileCleanup::class, app.resound.things.ThingRow::class, app.resound.things.ThingRecordRow::class, app.resound.things.ThingWatchState::class, app.resound.importer.ImportRecordRow::class, app.resound.redo.RedoSnapshotRow::class, SegmentEntity::class, EventEntity::class, HeartbeatEntity::class, BatteryEntity::class,
+@Database(entities = [TopicRow::class, TopicSpanRow::class, TopicMarkRow::class, DeviceTransfer::class, ImportFingerprint::class, FolderObservation::class,
+    PrivacyFileCleanup::class, ThingRow::class, ThingRecordRow::class, ThingWatchState::class, ImportRecordRow::class, RedoSnapshotRow::class, SegmentEntity::class,
+    EventEntity::class, HeartbeatEntity::class, BatteryEntity::class,
     TranscriptLineEntity::class, AsrUsageEntity::class, AsrAttemptEntity::class,
     MemoryEventEntity::class, MemoryItemEntity::class, LlmUsageV2Entity::class, AppPowerEntity::class,
     VoiceprintSampleEntity::class, VoiceprintExclusionEntity::class, VoiceprintPersonEntity::class,
-    AskConversationEntity::class, AskMessageEntity::class, ReviewEntity::class, app.resound.search.LineFts::class, app.resound.search.EventFts::class,
-    app.resound.search.ItemFts::class, app.resound.search.EmbeddingEntity::class,
-    PendingDigest::class, app.resound.envsound.EnvSoundRow::class, app.resound.skills.SkillCardRow::class, app.resound.skills.SkillRunRow::class, app.resound.location.LocationPoint::class, app.resound.location.PlaceRow::class,
-    app.resound.screentime.ScreenEventRow::class, app.resound.screentime.ScreenAppNameRow::class, app.resound.screentime.ScreenPullStateRow::class, app.resound.screentime.ScreenCoverageGapRow::class, app.resound.screentime.PlaybackRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
+    AskConversationEntity::class, AskMessageEntity::class, ReviewEntity::class, LineFts::class, EventFts::class,
+    ItemFts::class, EmbeddingEntity::class,
+    PendingDigest::class, EnvSoundRow::class, SkillCardRow::class, SkillRunRow::class, LocationPoint::class, PlaceRow::class], version = CaptureDatabase.VERSION, exportSchema = true)
 @ConstructedBy(CaptureDatabaseConstructor::class)
 abstract class CaptureDatabase : RoomDatabase() {
     /** 由安卓装配入口传入；内存测试库为 null，不从底层连接反查路径。 */
     var filePath: String? = null
 
-    abstract fun topics(): app.resound.topic.TopicDao
-    abstract fun deviceSync(): app.resound.devices.DeviceSyncStore
-    abstract fun folderImports(): app.resound.importer.FolderImportDao
-    abstract fun imports(): app.resound.importer.ImportRecordDao
-    abstract fun things(): app.resound.things.ThingDao
-    abstract fun redoData(): app.resound.redo.RedoDao
-    abstract fun envSound(): app.resound.envsound.EnvSoundDao
-    abstract fun push(): app.resound.push.PushDao
+    abstract fun topics(): TopicDao
+    abstract fun deviceSync(): DeviceSyncStore
+    abstract fun folderImports(): FolderImportDao
+    abstract fun imports(): ImportRecordDao
+    abstract fun things(): ThingDao
+    abstract fun redoData(): RedoDao
+    abstract fun envSound(): EnvSoundDao
+    abstract fun push(): PushDao
     abstract fun privacy(): PrivacyDao
     abstract fun capture(): CaptureDao
     abstract fun voiceInput(): VoiceInputDao
@@ -83,13 +121,12 @@ abstract class CaptureDatabase : RoomDatabase() {
     abstract fun voiceprint(): VoiceprintDao
     abstract fun ask(): AskDao
     abstract fun review(): ReviewDao
-    abstract fun skills(): app.resound.skills.SkillDao
-    abstract fun location(): app.resound.location.LocationDao
-    abstract fun places(): app.resound.location.PlaceDao
-    abstract fun screenTime(): app.resound.screentime.ScreenTimeDao
+    abstract fun skills(): SkillDao
+    abstract fun location(): LocationDao
+    abstract fun places(): PlaceDao
     companion object {
         /** 当前数据库版本；加迁移时同步改这里 */
-        const val VERSION = 37
+        const val VERSION = 34
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
@@ -182,7 +219,7 @@ abstract class CaptureDatabase : RoomDatabase() {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
                 db.execSQL("ALTER TABLE ask_messages ADD COLUMN actionJson TEXT")
                 db.execSQL("CREATE TABLE IF NOT EXISTS embeddings (kind TEXT NOT NULL, refId INTEGER NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(kind, refId))")
-                app.resound.search.SearchIndex.install(db::execSQL, backfill = true)
+                SearchIndex.install(db::execSQL, backfill = true)
             }
         }
         val MIGRATION_11_12 = object : Migration(11, 12) {
@@ -240,7 +277,7 @@ abstract class CaptureDatabase : RoomDatabase() {
                 listOf("eventId", "status", "dueAt").forEach { column ->
                     db.execSQL("CREATE INDEX index_memory_items_$column ON memory_items($column)")
                 }
-                app.resound.search.SearchIndex.install(db::execSQL, backfill = false)
+                SearchIndex.install(db::execSQL, backfill = false)
             }
         }
         val MIGRATION_18_19 = object : Migration(18, 19) {
@@ -297,12 +334,12 @@ abstract class CaptureDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE segments ADD COLUMN importChannel INTEGER")
                 db.execSQL("ALTER TABLE segments ADD COLUMN speakerCount INTEGER")
                 db.execSQL("CREATE INDEX index_segments_importRecordId ON segments(importRecordId)")
-                app.resound.importer.ImportRecordSchema.install(db)
+                ImportRecordSchema.install(db)
             }
         }
         /** 卡 079 寻物 */
         val MIGRATION_26_27 = object : Migration(26, 27) {
-            override fun migrate(db: androidx.sqlite.SQLiteConnection) = app.resound.things.ThingSchema.create(db)
+            override fun migrate(db: androidx.sqlite.SQLiteConnection) = ThingSchema.create(db)
         }
         val MIGRATION_27_28 = object : Migration(27, 28) {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
@@ -326,13 +363,13 @@ abstract class CaptureDatabase : RoomDatabase() {
         /** 足迹（PR #19）：全天定位点、地名缓存（含手动改名与“家”）；原为 29→30，与 0.2.20/0.2.21 的版本顺延为 31→32 */
         val MIGRATION_31_32 = object : Migration(31, 32) {
             override fun migrate(db: androidx.sqlite.SQLiteConnection) {
-                app.resound.location.LocationSchema.create(db)
-                app.resound.location.PlaceSchema.create(db)
-                app.resound.location.PlaceSchema.addManual(db)
+                LocationSchema.create(db)
+                PlaceSchema.create(db)
+                PlaceSchema.addManual(db)
             }
         }
         val MIGRATION_32_33 = object : Migration(32, 33) {
-            override fun migrate(db: androidx.sqlite.SQLiteConnection) = app.resound.topic.TopicSchema.create(db)
+            override fun migrate(db: androidx.sqlite.SQLiteConnection) = TopicSchema.create(db)
         }
         /** 卡 183：只建测量通过的两个索引；Room 的升级事务负责中断回滚。 */
         val MIGRATION_33_34 = object : Migration(33, 34) {
@@ -341,32 +378,10 @@ abstract class CaptureDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transcript_lines_startAt` ON `transcript_lines` (`startAt`)")
             }
         }
-        /** 卡 185b：屏幕时间四张表；事件唯一索引（at,pkg,type,cls）让重复拉取靠冲突忽略去重。 */
-        val MIGRATION_34_35 = object : Migration(34, 35) {
-            override fun migrate(db: androidx.sqlite.SQLiteConnection) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, `pkg` TEXT NOT NULL, `cls` TEXT NOT NULL DEFAULT '', `type` INTEGER NOT NULL)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_screen_events_at_pkg_type_cls` ON `screen_events` (`at`, `pkg`, `type`, `cls`)")
-                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_app_names` (`pkg` TEXT NOT NULL PRIMARY KEY, `name` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL)")
-                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_pull_state` (`source` TEXT NOT NULL PRIMARY KEY, `coveredUntil` INTEGER, `floor` INTEGER NOT NULL DEFAULT 0)")
-                db.execSQL("CREATE TABLE IF NOT EXISTS `screen_coverage_gaps` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source` TEXT NOT NULL, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER NOT NULL, `code` TEXT NOT NULL)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_screen_coverage_gaps_source_fromAt` ON `screen_coverage_gaps` (`source`, `fromAt`)")
-            }
-        }
-        /** 卡 190a：设备播放记录表；untilAt 播放中为 null。SQL 与实体 createSql 对齐，避免两路径 sqlite_master 文本分叉。 */
-        val MIGRATION_35_36 = object : Migration(35, 36) {
-            override fun migrate(db: androidx.sqlite.SQLiteConnection) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS `playback_rows` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionKey` TEXT NOT NULL, `pkg` TEXT NOT NULL, `name` TEXT NOT NULL, `title` TEXT, `subtitle` TEXT, `fromAt` INTEGER NOT NULL, `untilAt` INTEGER, `lastSeenAt` INTEGER NOT NULL)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_rows_fromAt` ON `playback_rows` (`fromAt`)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_rows_sessionKey` ON `playback_rows` (`sessionKey`)")
-            }
-        }
-        /** 卡 191a：外放「仍要转写」片段的整理闸列。 */
-        val MIGRATION_36_37 = object : Migration(36, 37) {
-            override fun migrate(db: androidx.sqlite.SQLiteConnection) {
-                db.execSQL("ALTER TABLE segments ADD COLUMN playbackDigest INTEGER NOT NULL DEFAULT 0")
-            }
-        }
-        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
+        val MIGRATIONS get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
+            MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27,
+            MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
     }
 }
 
