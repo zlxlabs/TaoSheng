@@ -228,6 +228,7 @@ fun TranscriptScreen(
             val id = seg.segmentId
             SegmentCard(seg, Modifier.animateItem().then(if (selection.active) Modifier.trackRow(selection, id) else Modifier),
                 realtime, onTranscribeAnyway = { repo.transcribeAnyway(id) },
+                onAllowPlaybackDigest = { repo.allowPlaybackDigest(id) },
                 onRetry = { repo.retrySegment(id) }, onDelete = { repo.deleteFailed(id) },
                 selected = if (selection.active) id in selection.ids else null,
                 onLongPress = {
@@ -712,6 +713,7 @@ private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) = app.resound.ui.ve
 
 @Composable
 private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Boolean, onTranscribeAnyway: () -> Unit,
+                        onAllowPlaybackDigest: () -> Unit,
                         onRetry: () -> Unit = {}, onDelete: () -> Unit = {},
                         /** 多选时是否选中；不在多选为 null */
                         selected: Boolean? = null, onLongPress: () -> Unit = {}, onTap: () -> Unit = {}) {
@@ -740,7 +742,7 @@ private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Bo
         Spacer(Modifier.height(10.dp))
         AnimatedContent(seg.status, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(150)) }, label = "segBody") { status ->
             when (status) {
-                TranscriptStatus.Done -> SpeakerLines(seg.lines)
+                TranscriptStatus.Done -> PlaybackHeldDone(seg, onAllowPlaybackDigest)
                 TranscriptStatus.Running -> Placeholder()
                 TranscriptStatus.Pending -> Note(if (realtime) "马上转写" else "等下一轮转写")
                 TranscriptStatus.Empty -> Note("只有声音，没识别出说话内容")
@@ -762,24 +764,6 @@ private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Bo
     }
 }
 
-@Composable
-private fun StatusChip(seg: SegmentTranscript) {
-    val c = Rs.colors
-    val (text, color) = when (seg.status) {
-        TranscriptStatus.Pending -> "等待中" to c.textTertiary
-        TranscriptStatus.Running -> "转写中" to c.accent
-        TranscriptStatus.Failed -> "没转成功" to c.critical
-        TranscriptStatus.Empty -> "没有文字" to c.textTertiary
-        TranscriptStatus.Done -> if (seg.audioAvailable) return else "录音已删" to c.textTertiary
-        TranscriptStatus.SkippedPlayback -> "外放时录的" to c.textTertiary
-        TranscriptStatus.Abandoned -> "无法转写" to c.textTertiary
-        TranscriptStatus.Quiet -> "已忽略" to c.textTertiary
-    }
-    Box(Modifier.clip(CircleShape).background(color.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 3.dp)) {
-        Text(text, style = RsType.caption, color = color)
-    }
-}
-
 /** 没转成功、不再提醒的段：灰色原因，右边“重试”“删除”；删除点两次才删 */
 @Composable
 private fun FailedActions(reason: String, retry: (() -> Unit)?, onDelete: () -> Unit) {
@@ -797,7 +781,7 @@ private fun FailedActions(reason: String, retry: (() -> Unit)?, onDelete: () -> 
 }
 
 @Composable
-private fun Note(text: String, color: Color = Rs.colors.textTertiary, modifier: Modifier = Modifier) {
+internal fun Note(text: String, color: Color = Rs.colors.textTertiary, modifier: Modifier = Modifier) {
     Text(text, style = RsType.subhead, color = color, modifier = modifier)
 }
 
