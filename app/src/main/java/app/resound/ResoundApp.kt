@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.first
 class ResoundApp : Application() {
     private lateinit var watchdogPreferences: android.content.SharedPreferences.OnSharedPreferenceChangeListener
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val pipelineDiagnostics by lazy { app.resound.transcribe.PipelineDiagnostics(this) }
+    internal val pipelineScheduler by lazy { app.resound.transcribe.PipelineScheduler(this) }
     val inputs by lazy { app.resound.audio.AndroidInputDevices(this) }
     internal lateinit var cardDevices: app.resound.devices.android.DeviceInputs
     val database by lazy { CaptureDatabase.open(this) }
@@ -34,13 +36,14 @@ class ResoundApp : Application() {
     fun rescheduleDigest(changed: Boolean = false) {
         if (changed) transcribeScheduler.timingChanged() else transcribeScheduler.scheduleDigest()
     }
-    fun enqueueTimedDigest(target: Long, expires: Long) = transcribeScheduler.enqueueTimed(target, expires)
-    fun timedDigestValid(target: Long): Boolean {
-        val timing = AppGraph.digestTiming
-        val local = java.time.Instant.ofEpochMilli(target).atZone(java.time.ZoneId.systemDefault())
-        return timing.mode.value == DigestMode.TimePoints && local.hour * 60 + local.minute in timing.timePoints.value
+    fun recoverTimedDigest() = transcribeScheduler.recoverTimed()
+    suspend fun resumeWaitingTranscriptionBatch(action: String?) {
+        when (action) {
+            android.content.Intent.ACTION_SCREEN_ON -> pipelineScheduler.trigger("亮屏")
+            android.content.Intent.ACTION_POWER_CONNECTED -> pipelineScheduler.trigger("接电")
+        }
+        transcribeScheduler.resumeWaitingBatch(action)
     }
-    suspend fun resumeWaitingTranscriptionBatch(action: String?) = transcribeScheduler.resumeWaitingBatch(action)
     fun runTranscriptionNow() = transcribeScheduler.runNow()
     lateinit var controller: AndroidCaptureController
         private set
@@ -60,7 +63,6 @@ class ResoundApp : Application() {
             files = app.resound.platform.LocalFileStore(app.resound.platform.AndroidDispatchers),
             dispatchers = app.resound.platform.AndroidDispatchers,
         )
-        AppGraph.configureNetwork(AppGraph.platform.keyValueStore)
         val crashes = app.resound.diagnostics.CrashRecords(this)
         crashes.installHandler()
         appDisplayName = appName
@@ -121,7 +123,7 @@ class ResoundApp : Application() {
         AppGraph.envSound = envSound
         AppGraph.location = app.resound.location.LocationRepository.create(this, database, scope)
         AppGraph.situation = app.resound.context.LocalSituationLookup.create(database, AppGraph.location, scope, AppGraph.platform.zone, AppGraph.platform.dispatchers.io)
-        // 卡 185b：屏幕时间采集底座；开关默认关，拉取器单例供周期任务与查询前拉取共用同一 Mutex。
+        // 屏幕时间采集底座；开关默认关，拉取器单例供周期任务与查询前拉取共用同一 Mutex。
         val screenPrefs = getSharedPreferences("screen-time", MODE_PRIVATE)
         val screenTimeSettings = app.resound.screentime.ScreenTimeSettings(
             readBoolean = { key, def -> screenPrefs.getBoolean(key, def) },
@@ -135,8 +137,8 @@ class ResoundApp : Application() {
             screenTimeSource, database.screenTime(),
             now = AppGraph.platform.now::now, denied = { it is SecurityException },
             diagnostic = { android.util.Log.i("screentime", it) })
-        // 卡 186c：查询仓储；桌面与系统 UI 不算「在用」的 App。桌面只认 priority >= 0 的正规桌面——
-        // 系统设置的 FallbackHome 以 priority=-1000 兜底响应 HOME，按包名排除会连整个「设置」一起排掉（186d）。
+        // 查询仓储；桌面与系统 UI 不算「在用」的 App。桌面只认 priority >= 0 的正规桌面——
+        // 系统设置的 FallbackHome 以 priority=-1000 兜底响应 HOME，按包名排除会连整个「设置」一起排掉。
         val launcherPkgs = packageManager.queryIntentActivities(
             android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME),
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
@@ -227,7 +229,9 @@ class ResoundApp : Application() {
         digestRunner = DigestRunner(this, database.memory(), llm, digestSettings, { AppGraph.prompts.text("digest") }, situation = AppGraph.situation, thingExtraction = thingExtraction, networkAllowed = {
             val connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-        }, unseparated = database.transcribe()::unseparated, playbackMillis = database.transcribe()::playbackMillis, isMedia = database.envSound()::media, voiceprintReady = voiceprintRepository::isReady, hotwords = hotwords::merged, afterDigest = { manual -> app.resound.importer.ImportTodoMerge.all(database); skillScheduler.afterDigest(manual) })
+        }, unseparated = database.transcribe()::unseparated, playbackMillis = database.transcribe()::playbackMillis,
+            isMedia = database.envSound()::media, voiceprintReady = voiceprintRepository::isReady, hotwords = hotwords::merged,
+            afterDigest = { manual -> app.resound.importer.ImportTodoMerge.all(database); skillScheduler.afterDigest(manual) })
         AppGraph.importKinds = app.resound.importer.AndroidImportKinds.create(this, database,
             AppGraph.importer as app.resound.importer.AndroidAudioImporter, scope, digestSettings, llm,
             app.resound.importer.ImportSpeakers(database, pcmReader::readPcm, { CampPlusEmbedding(this) }),
@@ -307,6 +311,7 @@ class ResoundApp : Application() {
         AppGraph.setup = AndroidSetupGuide(this)
         segmentFiles // 启动串行编码队列，重试完整暂存片段。
         scheduler.schedule()
+        registerActivityLifecycleCallbacks(app.resound.digest.DigestForegroundRecovery(this))
         app.resound.search.EmbeddingScheduler.start(this)
         val backupRepository = app.resound.backup.AndroidBackupRepository(this, database, diary = AppGraph.diary)
         AppGraph.backup = backupRepository
@@ -333,6 +338,7 @@ class ResoundApp : Application() {
         inputs.attachCards(cardDevices, AppGraph.deviceCards, scope)
         app.resound.devices.DeviceCardsWork.schedule(this)
         app.resound.update.UpdateWork.schedule(this, updater.autoCheck.value, updater.previewChannel.value)
+        pipelineScheduler
         registerActivityLifecycleCallbacks(app.resound.update.UpdateForegroundChecks(updater, scope))
         pushChannels.attachSubscriptions(this, database, backupRepository, scope)
         pushChannels.attachFootprint(this, scope)

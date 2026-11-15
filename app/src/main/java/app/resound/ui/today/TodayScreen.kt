@@ -236,6 +236,11 @@ fun TodayScreen(
     fun timelineIndex() = pendingIndex() + (if (pendingCount > 0) 1 else 0)
     // 主卡上点了暂停：底部浮一条“已暂停 30 分钟 · 改时长 · 撤销”
     var pausedNote by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    // 议题 #34：按关键词搜原话和事件；预览里没有数据库就不显示按钮
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val recordSearch = remember { (appContext as? app.resound.ResoundApp)?.let { app.resound.search.RecordSearch(it.database) } }
+    var searching by remember { mutableStateOf(false) }
+    if (searching && recordSearch != null) RecordSearchSheet(recordSearch) { searching = false }
     Box(Modifier.fillMaxSize().background(c.background).onGloballyPositioned { boxTop = it.boundsInRoot().top }) {
     LazyColumn(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
@@ -247,9 +252,11 @@ fun TodayScreen(
         // 闪退提示、上手清单和标题放在同一格：不显示时不占位，录音卡紧挨着日期
         item {
             Column {
-                Header(date, themeMode, onThemeMode)
+                Header(date, themeMode, onThemeMode, onSearch = recordSearch?.let { { searching = true } })
                 if (dayOffset == 0) {
                     app.resound.ui.settings.CrashNotice(topGap = 20.dp)
+                    UpdatePrompt(topGap = 16.dp)
+                    BackgroundLimitNotice(topGap = 12.dp)
                     // 首次使用：几步设置的清单，做完或关掉就不再出现；只在看今天时显示
                     StartChecklist(capture, hasKey, topGap = 20.dp)
                     app.resound.ui.onboarding.OnboardingTipCard(topGap = 12.dp)
@@ -408,7 +415,7 @@ fun TodayScreen(
 }
 
 @Composable
-private fun Header(date: LocalDate, themeMode: ThemeMode, onThemeMode: (ThemeMode) -> Unit) {
+private fun Header(date: LocalDate, themeMode: ThemeMode, onThemeMode: (ThemeMode) -> Unit, onSearch: (() -> Unit)? = null) {
     val c = Rs.colors
     val today = LocalDate.now()
     val label = when (ChronoUnit.DAYS.between(date, today)) {
@@ -423,6 +430,7 @@ private fun Header(date: LocalDate, themeMode: ThemeMode, onThemeMode: (ThemeMod
             Spacer(Modifier.height(2.dp))
             Text(date.format(DateTimeFormatter.ofPattern("M月d日")), style = RsType.largeTitle, color = c.text)
         }
+        onSearch?.let { SearchButton(it); Spacer(Modifier.width(8.dp)) }
         // 日夜切换：太阳 / 月亮 / 半圆（跟随系统），点一下按顺序切换
         ThemeModePill(themeMode, onThemeMode)
     }

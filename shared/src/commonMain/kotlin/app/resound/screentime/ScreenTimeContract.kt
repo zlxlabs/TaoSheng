@@ -2,7 +2,7 @@ package app.resound.screentime
 
 /**
  * 屏幕时间的读取约定（Claude 定稿，签名不得自行修改）。
- * 问问工具、推送、订阅文档、情境行都只依赖本文件；实现是 ScreenTimeQueries（卡 186a）。
+ * 问问工具、推送、订阅文档、情境行都只依赖本文件；实现是 ScreenTimeQueries。
  * 区间一律左闭右开、纪元毫秒。
  */
 
@@ -13,7 +13,7 @@ data class NamedAppSession(val pkg: String, val name: String, val from: Long, va
 data class CoverageGap(val code: String, val source: String, val from: Long, val until: Long, val fix: String)
 
 /**
- * 设备播放记录一行（第 3 步，卡 190）：只表示手机在播放，不代表本人在听。
+ * 设备播放记录一行：只表示手机在播放，不代表本人在听。
  * [until] 已按「结束时刻，未结束则最后观测时刻」截止，并裁到查询区间内。
  * [name]、[title]、[subtitle] 都已按 [NamedAppSession.name] 同样规则脱敏；没有标题时为 null。
  */
@@ -50,7 +50,7 @@ object GapCode {
 const val PLAYBACK_SOURCE = "playback"
 
 /**
- * 媒体会话变化的接收方（第 3 步，卡 190）。安卓通知监听服务经 AppGraph 取得并调用；实现负责总开关门控
+ * 媒体会话变化的接收方。安卓通知监听服务经 AppGraph 取得并调用；实现负责总开关门控
  * （关闭时全部调用直接返回、不写库）与落库。[sessionKey] 是平台给的不透明会话标识，同一会话不变。
  * 时间一律纪元毫秒。落库失败照常上抛（fail fast），由调用方记一行 `playback:` 前缀的日志。
  */

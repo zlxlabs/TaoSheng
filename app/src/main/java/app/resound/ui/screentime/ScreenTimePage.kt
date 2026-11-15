@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.resound.R
 import app.resound.capture.MicHolderGuess
+import app.resound.diagnostics.FailureNotes
 import app.resound.screentime.ScreenTimeSettings
 import app.resound.ui.skills.Toggle
 import app.resound.ui.theme.Rs
@@ -82,7 +83,8 @@ fun ScreenTimePage(settings: ScreenTimeSettings, bottom: Dp) {
                     try {
                         settings.setEnabled(on)
                         if (on && !guess.permitted()) askUsage = true
-                    } catch (_: IllegalStateException) {
+                    } catch (e: IllegalStateException) {
+                        FailureNotes.record("ui/screentime-save", e)
                         saveError = true
                     }
                 }

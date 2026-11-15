@@ -8,7 +8,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import androidx.room.Upsert
 
-/** 屏幕时间读写。读四个方法是卡 186 固定消费的签名；写方法只服务本卡拉取与隐私删除。 */
+/** 屏幕时间读写。读四个方法是查询侧固定消费的签名；写方法只服务拉取与隐私删除。 */
 @Dao
 interface ScreenTimeDao {
     @Query("SELECT * FROM screen_events WHERE at >= :from AND at < :until ORDER BY at, id")

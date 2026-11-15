@@ -110,6 +110,8 @@ abstract class TranscribeDao {
     /** 还没转写的录音总时长（毫秒），决定是否提前转写 */
     @Query("SELECT COALESCE(SUM(endAt - startAt), 0) FROM segments WHERE status = 'Pending'")
     abstract suspend fun pendingMillis(): Long
+    @Query("SELECT COALESCE(SUM(endAt - startAt), 0) FROM segments WHERE status = 'Pending' OR (status = 'Failed' AND attempts < 5)")
+    abstract fun observePendingMillis(): Flow<Long>
     @Query("SELECT MIN(nextRetryAt) FROM segments WHERE status = 'Failed' AND attempts < 5 AND nextRetryAt IS NOT NULL")
     abstract suspend fun earliestRetry(): Long?
     // Running 的尝试未完成，不占失败次数；已发送的用量仍保留，第五次中断也可恢复。
@@ -160,7 +162,7 @@ abstract class TranscribeDao {
     @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = 1 WHERE id = :id AND status = 'SkippedPlayback'")
     abstract suspend fun transcribeAnyway(id: Long): Int
 
-    /** 卡 191a：放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
+    /** 放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
     @Query("UPDATE segments SET playbackDigest = 2 WHERE id = :id AND playbackDigest = 1")
     abstract suspend fun allowPlaybackDigest(id: Long): Int
     @Query("SELECT COUNT(*) FROM segments WHERE status = 'SkippedPlayback'")

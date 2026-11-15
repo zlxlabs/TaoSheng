@@ -19,7 +19,7 @@ class ScreenTimeSettings(
         check(saveBoolean(KEY, on))
         // 从关到开时记录打开时刻：拉取起点与 disabled 缺口都以此为界，关闭期间不补采。
         if (!was && on) check(saveLong(ENABLED_AT_KEY, now()))
-        // 从开到关时记录关闭时刻：disabled 缺口从这里起算，关闭前仍开着的使用不丢（186d）。
+        // 从开到关时记录关闭时刻：disabled 缺口从这里起算，关闭前仍开着的使用不丢。
         if (was && !on) check(saveLong(DISABLED_AT_KEY, now()))
         _enabled.value = on
     }

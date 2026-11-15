@@ -102,7 +102,7 @@ class ScreenTimeRulesTest {
         assertEquals(listOf(AppSession("A", t, t + 300_000)), out)
     }
 
-    /** 测试（卡 186c 必测 7，改写 185a 必测 8 前半）：A 暂停 4.9 秒后同页 RESUMED，两段在输出里紧邻，合并为一段。 */
+    /** A 暂停 4.9 秒后同页 RESUMED，两段在输出里紧邻，合并为一段。 */
     @Test fun nearbySwitchClosedSessionsMerge() {
         val events = listOf(
             ev(1, t, "A", ScreenEventType.RESUMED, "Page1"),
@@ -115,7 +115,7 @@ class ScreenTimeRulesTest {
         )
     }
 
-    /** 测试（卡 186c 必测 6）：A、B(2 秒)、A 不合并（中间隔了别的输出段），三段互不重叠，totals 总和等于实际亮屏时长。 */
+    /** A、B(2 秒)、A 不合并（中间隔了别的输出段），三段互不重叠，totals 总和等于实际亮屏时长。 */
     @Test fun sessionsSeparatedByOtherPackageDoNotMerge() {
         val events = listOf(
             ev(1, t, "A", ScreenEventType.RESUMED),

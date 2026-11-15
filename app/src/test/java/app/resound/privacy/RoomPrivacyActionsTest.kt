@@ -153,7 +153,7 @@ class RoomPrivacyActionsTest {
         assertEquals(0, count("memory_events")); assertEquals(0, count("memory_items"))
     }
 
-    /** 卡 185b：按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
+    /** 按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
     @Test fun deleteRangeRemovesScreenEventsAndRaisesFloorSoPullStartsAfterIt() = runBlocking {
         db.screenTime().insertEvents(listOf(
             ScreenEventRow(at = now - 30_000, pkg = "a", cls = "", type = 1),

@@ -1,9 +1,12 @@
 package app.resound.context
 
 import app.resound.AppGraph
+import app.resound.platform.ZoneProvider
 import app.resound.data.*
 import app.resound.envsound.EnvSoundRow
 import app.resound.location.*
+import app.resound.screentime.DevicePlayback
+import app.resound.screentime.NamedAppSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.collect
@@ -20,12 +23,12 @@ class LocalSituationLookup internal constructor(
     placeRevision: () -> Long = { 0 }, soundRevision: () -> Long = { 0 },
     zone: () -> ZoneId, io: kotlinx.coroutines.CoroutineDispatcher,
     pointBounds: suspend () -> Pair<Long, Long>? = { null },
-    appSessions: suspend (Long, Long) -> List<app.resound.screentime.NamedAppSession> = { _, _ -> emptyList() },
-    devicePlayback: suspend (Long, Long) -> List<app.resound.screentime.DevicePlayback> = { _, _ -> emptyList() },
+    appSessions: suspend (Long, Long) -> List<NamedAppSession> = { _, _ -> emptyList() },
+    devicePlayback: suspend (Long, Long) -> List<DevicePlayback> = { _, _ -> emptyList() },
 ) : SituationLookup by SituationStore(available, points, cachedPlace, sounds, placeRevision, soundRevision,
-    app.resound.platform.ZoneProvider { zone().id }, io, { it is SecurityException }, Math::toRadians, pointBounds, appSessions, devicePlayback) {
+    ZoneProvider { zone().id }, io, { it is SecurityException }, Math::toRadians, pointBounds, appSessions, devicePlayback) {
     companion object {
-        fun create(database: CaptureDatabase, location: LocationRepository, scope: CoroutineScope, zone: app.resound.platform.ZoneProvider, io: kotlinx.coroutines.CoroutineDispatcher): LocalSituationLookup {
+        fun create(database: CaptureDatabase, location: LocationRepository, scope: CoroutineScope, zone: ZoneProvider, io: kotlinx.coroutines.CoroutineDispatcher): LocalSituationLookup {
             val places = AtomicLong()
             val sounds = AtomicLong()
             scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -41,7 +44,7 @@ class LocalSituationLookup internal constructor(
                         if (!it.step() || it.isNull(0)) null else it.getLong(0) to it.getLong(1)
                     }
                 },
-                // 卡 186c：在用项数据源；reader 未装配或开关关闭时返回空，接口默认实现同样兜底。
+                // 在用项数据源；reader 未装配或开关关闭时返回空，接口默认实现同样兜底。
                 appSessions = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty() },
                 devicePlayback = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.devicePlayback.orEmpty() })
         }

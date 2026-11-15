@@ -31,11 +31,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-/** 卡 191a：day() 的 playbackHeld 只在 playbackDigest=1 时为 true；repo.allowPlaybackDigest 转发放行。 */
+/** day() 的 playbackHeld 只在 playbackDigest=1 时为 true；repo.allowPlaybackDigest 转发放行。 */
 @OptIn(kotlin.time.ExperimentalTime::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], manifest = Config.NONE, application = Application::class)
-class PlaybackHeldDay191aTest {
+class PlaybackHeldDayTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private lateinit var db: CaptureDatabase
     private lateinit var scope: CoroutineScope

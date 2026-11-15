@@ -1,13 +1,15 @@
 package app.resound.transcribe
 
+import app.resound.net.EndpointRules
+import app.resound.net.androidNetwork
+import app.resound.net.defaultAndroidHttp
+import app.resound.net.queryModels
+
 import app.resound.digest.HeaderEntry
-import app.resound.digest.serviceHeaders
 import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /** 卡 055：服务地址的类型，界面据此给提示（约定，签名不要改） */
@@ -25,45 +27,24 @@ object OpenAiEndpoint {
             else->EndpointKind.Invalid
         }
     }
-    private fun isLocalHost(host:String) = app.resound.net.EndpointRules.isLocalHost(host)
+    private fun isLocalHost(host:String) = EndpointRules.isLocalHost(host)
     /** 保留代理前缀和已有版本号，仅在没有版本号时依次尝试 /v1 与无版本路径。 */
     fun bases(input:String):List<String> {
         val value=input.trim().trimEnd('/');val uri=runCatching { URI(value) }.getOrNull()
         require(kind(value)!=EndpointKind.Invalid && uri!=null && uri.userInfo==null && uri.rawQuery==null && uri.rawFragment==null){"请输入 http:// 或 https:// 开头的服务地址，不要包含密钥或查询参数"}
-        return app.resound.net.EndpointRules.bases(value,uri.path.orEmpty())
+        return EndpointRules.bases(value,uri.path.orEmpty())
     }
     fun transcriptions(input:String)=bases(input).map{"$it/audio/transcriptions"}
 }
 data class RemoteModels(val base:String,val ids:List<String>)
-suspend fun fetchRemoteModels(endpoint:String,key:String, client:OkHttpClient=(if (app.resound.AppGraph.legacyNetwork) OkHttpClient.Builder() else app.resound.net.defaultAndroidHttp.newBuilder()).connectTimeout(10,TimeUnit.SECONDS).callTimeout(if(OpenAiEndpoint.kind(endpoint)==EndpointKind.LocalHttp) 60 else 25,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build(), headers: List<HeaderEntry> = emptyList()):RemoteModels=withContext(Dispatchers.IO){
-    if (app.resound.AppGraph.legacyNetwork) return@withContext legacyFetchRemoteModels(endpoint, key, client, headers)
-    val network = app.resound.net.androidNetwork(client)
+suspend fun fetchRemoteModels(endpoint:String,key:String, client:OkHttpClient=defaultAndroidHttp.newBuilder().connectTimeout(10,TimeUnit.SECONDS).callTimeout(if(OpenAiEndpoint.kind(
+    endpoint)==EndpointKind.LocalHttp) 60 else 25,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build(), headers: List<HeaderEntry> = emptyList(
+    )):RemoteModels=withContext(Dispatchers.IO){
+    val network = androidNetwork(client)
     try {
-        val r = app.resound.net.queryModels(network, OpenAiEndpoint.bases(endpoint), key, headers)
+        val r = queryModels(network, OpenAiEndpoint.bases(endpoint), key, headers)
         RemoteModels(r.base, r.ids)
     } catch(e:kotlinx.coroutines.CancellationException){throw e}
     catch(e:IllegalStateException){throw e}
     catch(e:Exception){throw IllegalStateException(modelServiceError(endpoint,e,"拉取失败，请检查地址和网络；也可手动填写模型"))}
-}
-
-internal suspend fun legacyFetchRemoteModels(endpoint:String,key:String, client:OkHttpClient=OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS).callTimeout(if(OpenAiEndpoint.kind(endpoint)==EndpointKind.LocalHttp) 60 else 25,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build(), headers: List<HeaderEntry> = emptyList()):RemoteModels=withContext(Dispatchers.IO){
-    try {
-        for(base in OpenAiEndpoint.bases(endpoint)) {
-            client.newCall(Request.Builder().url("$base/models").serviceHeaders(key, headers).build()).awaitResponse().use{response->
-                if(response.code in setOf(404,405))return@use
-                if(response.code in setOf(401,403))throw IllegalStateException("鉴权失败，请检查密钥")
-                check(response.isSuccessful){"拉取失败；可手动填写模型名称"}
-                val bytes=response.body!!.byteStream().use{input->val out=java.io.ByteArrayOutputStream();val b=ByteArray(8192);while(out.size()<=1_000_000){val n=input.read(b);if(n<0)break;out.write(b,0,n)};out.toByteArray()}
-                check(bytes.size<=1_000_000){"模型列表过大，请手动填写"}
-                val data=JSONObject(bytes.toString(Charsets.UTF_8)).optJSONArray("data")?:throw IllegalStateException("服务未返回兼容的模型列表，可手动填写")
-                val ids=(0 until data.length()).mapNotNull{data.optJSONObject(it)?.optString("id")?.takeIf{v->v.isNotBlank() && v.length<=200}}.distinct().sorted()
-                check(ids.isNotEmpty()){"没有可选模型，请手动填写"}
-                return@withContext RemoteModels(base,ids)
-            }
-        }
-        throw IllegalStateException("服务没有提供模型列表，可手动填写模型名称")
-    } catch(e:kotlinx.coroutines.CancellationException){throw e}
-    catch(e:IllegalStateException){throw e}
-    catch(e:Exception){throw IllegalStateException(modelServiceError(endpoint,e,"拉取失败，请检查地址和网络；也可手动填写模型"))}
-    finally{client.dispatcher.executorService.shutdown();client.connectionPool.evictAll()}
 }

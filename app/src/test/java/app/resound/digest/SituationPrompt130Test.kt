@@ -69,7 +69,7 @@ class SituationPrompt130Test {
         assertTrue(prompt.system("模板").contains("以说话内容为准"))
     }
 
-    // ---------- 卡 184：外放提示（playbackMillis ≥ 3000 的 mic 片段） ----------
+    // ---------- 外放提示（playbackMillis ≥ 3000 的 mic 片段） ----------
 
     private fun lookup() = object : SituationLookup {
         override suspend fun placeDuring(start: Long, end: Long) = if (start == 0L) PlaceAt("公司", false, start, end) else null
@@ -126,7 +126,7 @@ class SituationPrompt130Test {
         assertFalse(SituationPrompt(false, null, mapOf(1L to 9000L)).merge(events, zone).contains("外放"))
     }
 
-    // ---------- 卡 186c：情境行「在用」 ----------
+    // ---------- 情境行「在用」 ----------
 
     private class CountingLookup(
         private val home: Boolean = false,
@@ -149,7 +149,7 @@ class SituationPrompt130Test {
         }
     }
 
-    /** 卡 186c：mic 片段出「在用」；有外放、无播放记录时外放归属落到在用 App（卡 190c）。整批 appSessions / devicePlayback 各查一次。 */
+    /** mic 片段出「在用」；有外放、无播放记录时外放归属落到在用 App。整批 appSessions / devicePlayback 各查一次。 */
     @Test fun inUseItemAppearsForMicSegmentsAndQueriesOncePerBatch() = runBlocking {
         val lookup = CountingLookup(home = true,
             sessions = listOf(NamedAppSession("com.tencent.mm", "微信", 0, 6000)))
@@ -227,7 +227,7 @@ class SituationPrompt130Test {
         assertEquals(1, calls)
     }
 
-    // ---------- 卡 190c：外放三档归属 ----------
+    // ---------- 外放三档归属 ----------
 
     private val oneLine = listOf(TranscriptLineEntity(1, 1, 0, 10_000, "一句", null))
     private val playing = mapOf(1L to 5_000L)
