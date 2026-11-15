@@ -157,8 +157,12 @@ abstract class TranscribeDao {
     @Query("DELETE FROM segments WHERE id = :id")
     abstract suspend fun deleteSegmentRow(id: Long)
 
-    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL WHERE id = :id AND status = 'SkippedPlayback'")
+    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = 1 WHERE id = :id AND status = 'SkippedPlayback'")
     abstract suspend fun transcribeAnyway(id: Long): Int
+
+    /** 卡 191a：放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
+    @Query("UPDATE segments SET playbackDigest = 2 WHERE id = :id AND playbackDigest = 1")
+    abstract suspend fun allowPlaybackDigest(id: Long): Int
     @Query("SELECT COUNT(*) FROM segments WHERE status = 'SkippedPlayback'")
     abstract suspend fun skippedPlaybackCount(): Int
     @Query("UPDATE segments SET status = 'SkippedEnv', completedAt = :at, nextRetryAt = NULL, error = NULL, voiceprintProcessedAt = :at WHERE id = :id AND status = 'Running' AND NOT EXISTS (SELECT 1 FROM env_sounds WHERE segmentId = :id AND (restored = 1 OR reportedWrong = 1))")

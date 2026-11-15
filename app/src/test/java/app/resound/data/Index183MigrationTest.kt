@@ -54,7 +54,10 @@ class Index183MigrationTest {
             AndroidSQLiteDriver().open(file.path).use { connection ->
                 val chain = CaptureDatabase.MIGRATIONS.filter { it.startVersion >= 33 && it.endVersion <= CaptureDatabase.VERSION }
                 assertEquals("33→当前版本的迁移链完整无缺口", CaptureDatabase.VERSION - 33, chain.size)
-                repeat(2) { chain.forEach { migration -> migration.migrate(connection) } }
+                // 库已由上面的 Room open 真实升到当前版本。33→36 的历史迁移写成 IF NOT EXISTS 幂等式，
+                // 对同一库重复重放两遍验证；36→37 的 ALTER ADD COLUMN 无 IF NOT EXISTS（SQLite 不支持），
+                // 不可对已升级的库重放，其单次真实执行已由 Room open 覆盖。
+                chain.dropLast(1).let { history -> repeat(2) { history.forEach { migration -> migration.migrate(connection) } } }
             }
             db = CaptureDatabase.open(context, file.path)
             sameAsOldBackup(db)
