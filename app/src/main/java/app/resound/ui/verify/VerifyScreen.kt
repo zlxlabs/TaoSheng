@@ -578,6 +578,11 @@ private fun SetupSection(setup: SetupGuide) {
     Section("后台设置", trailing = {
         Text("$doneCount / ${items.size} 已完成", style = RsType.caption, color = if (doneCount == items.size) c.good else c.accent)
     }) {
+        // 卓易通里的设置要对卓易通本身做，先说清楚，免得在涛声的设置里找半天
+        val container = (LocalContext.current.applicationContext as? app.resound.ResoundApp)?.pipelineDiagnostics?.system ==
+            app.resound.scheduling.BackgroundSystem.Type.Container
+        if (container) Text("你在鸿蒙的卓易通里用涛声，下面带“卓易通”的那项要在鸿蒙系统设置里对卓易通做。",
+            style = RsType.caption, color = c.textSecondary, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp))
         RsCard(padding = PaddingValues(horizontal = 18.dp, vertical = 6.dp)) {
             items.forEachIndexed { i, item ->
                 SetupRow(item, onOpen = { setup.open(item.key); version++ }, onDone = { setup.markDone(item.key); version++ })
@@ -640,8 +645,18 @@ private fun ExportRow(stats: CaptureStatsRepository) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
+    // 问题记录已包含这里的运行诊断，只留一个按钮，免得用户分不清两份记录。
+    if (app.resound.AppGraph.isProblemReportsReady) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            app.resound.ui.settings.ExportProblemPill()
+            Spacer(Modifier.height(8.dp))
+            Text("遇到闪退或功能不对，导出发给开发。只含运行情况和出错位置，不含原话、待办和密钥。",
+                style = RsType.caption, color = c.textTertiary, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+        return
+    }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Pill(if (busy) "正在导出…" else "导出诊断记录", filled = false) {
+        Pill(if (busy) "正在导出…" else "导出问题记录", filled = false) {
             if (busy) return@Pill
             busy = true
             scope.launch {

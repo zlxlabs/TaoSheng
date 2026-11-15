@@ -32,9 +32,9 @@ interface SituationLookup {
     /** [from, to) 内在名叫 [placeName] 的地方（名字包含即可，不区分大小写）停留的时间段，按时间排 */
     suspend fun staysAt(placeName: String, from: Long, to: Long): List<PlaceAt>
 
-    /** [from, until) 内手机前台使用段（卡 186c）；屏幕时间未装配或关闭时返回空。已脱敏的 [NamedAppSession.name]。 */
+    /** [from, until) 内手机前台使用段；屏幕时间未装配或关闭时返回空。已脱敏的 [NamedAppSession.name]。 */
     suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = emptyList()
 
-    /** [from, until) 内设备播放记录（卡 190）；屏幕时间未装配、关闭或没有通知使用权时返回空。 */
+    /** [from, until) 内设备播放记录；屏幕时间未装配、关闭或没有通知使用权时返回空。 */
     suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> = emptyList()
 }

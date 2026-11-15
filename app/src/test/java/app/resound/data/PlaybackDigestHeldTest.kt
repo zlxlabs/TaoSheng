@@ -21,17 +21,17 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.SQLiteMode
 import java.io.File
 
-/** 卡 191a：「仍要转写」的外放片段置 playbackDigest=1，转写行保留但暂不进整理取数口，放行（=2）后恢复。 */
+/** 「仍要转写」的外放片段置 playbackDigest=1，转写行保留但暂不进整理取数口，放行（=2）后恢复。 */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], manifest = Config.NONE, application = Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
-class PlaybackDigest191aTest {
+class PlaybackDigestHeldTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private lateinit var db: CaptureDatabase
     private val at = 1_700_000_000_000L
 
     @Before fun setup() {
-        context.deleteDatabase("playback-digest-191a.db")
+        context.deleteDatabase("playback-digest-held.db")
         db = Room.inMemoryDatabaseBuilder(context, CaptureDatabase::class.java)
             .setDriver(AndroidSQLiteDriver()).allowMainThreadQueries().build()
     }

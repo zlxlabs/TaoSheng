@@ -1,6 +1,8 @@
 @file:OptIn(kotlin.time.ExperimentalTime::class)
 package app.resound.context
 
+import app.resound.platform.ZoneProvider
+
 import app.resound.envsound.*
 import app.resound.location.*
 import app.resound.screentime.DevicePlayback
@@ -19,15 +21,15 @@ class SituationStore(
     private val sounds: suspend (Long, Long) -> List<EnvSoundRow>,
     private val placeRevision: () -> Long = { 0 },
     private val soundRevision: () -> Long = { 0 },
-    private val zone: app.resound.platform.ZoneProvider,
+    private val zone: ZoneProvider,
     private val io: kotlinx.coroutines.CoroutineDispatcher,
     private val permissionDenied: (Exception) -> Boolean,
     radians: (Double) -> Double,
     /** 定位记录的最早、最晚时间；没有记录为 null。用来收窄“不限日期”的查询，避免逐日遍历无限范围 */
     private val pointBounds: suspend () -> Pair<Long, Long>? = { null },
-    /** [from, until) 内手机前台使用段（卡 186c）；不受足迹开关 [available] 约束，由装配层传入，默认空。 */
+    /** [from, until) 内手机前台使用段；不受足迹开关 [available] 约束，由装配层传入，默认空。 */
     appSessions: suspend (Long, Long) -> List<NamedAppSession> = { _, _ -> emptyList() },
-    /** [from, until) 内设备播放记录（卡 190c）；不受足迹开关约束，默认空。 */
+    /** [from, until) 内设备播放记录；不受足迹开关约束，默认空。 */
     devicePlayback: suspend (Long, Long) -> List<DevicePlayback> = { _, _ -> emptyList() },
 ) : SituationLookup {
     private val trackRules = TrackRules(radians)

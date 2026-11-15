@@ -45,13 +45,33 @@ class DigestTiming053Test {
         assertNull(DigestTime.next(emptyList(), at("12:00:00"), zone))
     }
 
-    @Test fun delayedWorkExpiresAtNextPointIncludingBoundary() {
-        assertTrue(DigestTime.missed(at("19:00:00"), at("12:00:00"), at("18:00:00")))
-        assertTrue(DigestTime.missed(at("18:00:00"), at("12:00:00"), at("18:00:00")))
-        assertFalse(DigestTime.missed(at("12:20:00"), at("12:00:00"), at("18:00:00")))
+    @Test fun missedPointsSurviveRestartAndOnlySuccessfulCompletionConsumesThem() {
+        val timing = AndroidDigestTiming(context)
+        timing.addTimePoint(720); timing.addTimePoint(1080); timing.setMode(DigestMode.TimePoints)
+        context.getSharedPreferences("digest", 0).edit().putLong("timedSince", at("11:00:00")).commit()
+        val delayed = timing.pendingTimed(at("19:00:00"), zone)!!
+        assertEquals(at("18:00:00"), delayed.target)
+        val restored = AndroidDigestTiming(context)
+        assertEquals(delayed, restored.pendingTimed(at("23:00:00"), zone))
+        restored.completeTimed(delayed)
+        assertNull(AndroidDigestTiming(context).pendingTimed(at("23:00:00"), zone))
     }
 
-    @Test fun switchingBackCancelsAlarmAndRestoresPeriodicWithoutChangingTranscription() {
+    @Test fun oldCompletionCannotConsumeNewSettingsAndMidnightRecoversYesterday() {
+        val timing = AndroidDigestTiming(context)
+        timing.addTimePoint(1080); timing.setMode(DigestMode.TimePoints)
+        val prefs = context.getSharedPreferences("digest", 0)
+        prefs.edit().putLong("timedSince", at("11:00:00")).commit()
+        val old = timing.pendingTimed(at("19:00:00"), zone)!!
+        timing.addTimePoint(720)
+        prefs.edit().putLong("timedSince", at("11:00:00")).commit()
+        timing.completeTimed(old)
+        val pending = timing.pendingTimed(at("00:01:00") + 86_400_000, zone)!!
+        assertNotEquals(old.generation, pending.generation)
+        assertEquals(at("18:00:00"), pending.target)
+    }
+
+    @Test fun switchingBackReplacesTimedAlarmWithIntervalFallbackWithoutChangingTranscription() {
         WorkManagerTestInitHelper.initializeTestWorkManager(context, Configuration.Builder().setExecutor(SynchronousExecutor()).build())
         val manager = WorkManager.getInstance(context)
         try {
@@ -59,7 +79,7 @@ class DigestTiming053Test {
             val scheduler = TranscribeScheduler(context, AndroidTranscribeSettings(context)).apply { digestTiming = timing }
             timing.onChanged = scheduler::timingChanged
             scheduler.schedule()
-            val transcribe = manager.getWorkInfosForUniqueWork(TranscribeScheduler.PERIODIC).get().single()
+            val transcribe = manager.getWorkInfosForUniqueWork(TranscribeScheduler.PIPELINE_PERIODIC).get().single()
             timing.addTimePoint(720); timing.setMode(DigestMode.TimePoints)
             assertTrue(manager.getWorkInfosForUniqueWork(TranscribeScheduler.DIGEST_PERIODIC).get().all { it.state.isFinished })
             assertNotNull(timing.nextDigestAt.value)
@@ -68,16 +88,19 @@ class DigestTiming053Test {
                 shadowOf(it.operation).savedIntent.component?.className == DigestAlarmReceiver::class.java.name
             }
             assertEquals(1, digestAlarms().size)
-            val target = timing.nextDigestAt.value!!
-            scheduler.enqueueTimed(target, target + 86_400_000)!!.result.get()
-            val work = manager.getWorkInfosByTag(TranscribeScheduler.TIMED_TAG).get().single()
+            // 模拟系统漏掉至少一天；重启/多入口补漏只保留一个立即任务。
+            context.getSharedPreferences("digest", 0).edit().putLong("timedSince", System.currentTimeMillis() - 2 * 86_400_000L).commit()
+            scheduler.recoverTimed()!!.result.get()
+            scheduler.recoverTimed()!!.result.get()
+            val work = manager.getWorkInfosForUniqueWork(TranscribeScheduler.TIMED_NOW).get().single()
+            assertTrue(manager.getWorkInfosForUniqueWork(TranscribeScheduler.TIMED_GUARD).get().all { it.state.isFinished })
             assertEquals(NetworkType.CONNECTED, work.constraints.requiredNetworkType)
             timing.setMode(DigestMode.Interval)
             assertNull(timing.nextDigestAt.value)
-            assertTrue(digestAlarms().isEmpty())
-            assertTrue(manager.getWorkInfosForUniqueWork(TranscribeScheduler.DIGEST_PERIODIC).get().any { !it.state.isFinished })
+            assertEquals(1, digestAlarms().size) // 卡188：间隔模式保留非精确闹钟链。
+            assertTrue(manager.getWorkInfosForUniqueWork(TranscribeScheduler.DIGEST_PERIODIC).get().all { it.state.isFinished })
             assertTrue(manager.getWorkInfosByTag(TranscribeScheduler.TIMED_TAG).get().all { it.state.isFinished })
-            assertEquals(transcribe.id, manager.getWorkInfosForUniqueWork(TranscribeScheduler.PERIODIC).get().single().id)
+            assertEquals(transcribe.id, manager.getWorkInfosForUniqueWork(TranscribeScheduler.PIPELINE_PERIODIC).get().single().id)
         } finally { manager.cancelAllWork().result.get(); WorkManagerTestInitHelper.closeWorkDatabase() }
     }
 

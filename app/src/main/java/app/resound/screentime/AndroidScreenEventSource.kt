@@ -29,5 +29,6 @@ class AndroidScreenEventSource(context: Context) : ScreenEventSource {
         for (pkg in pkgs) runCatching {
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
         }.getOrNull()?.let { put(pkg, it) }
+        // 未安装或系统已撤包名没有显示名，跳过即可，查询侧会回退到包名。
     }
 }

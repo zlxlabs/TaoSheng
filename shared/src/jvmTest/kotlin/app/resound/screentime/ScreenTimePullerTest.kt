@@ -207,7 +207,7 @@ class ScreenTimePullerTest {
         assertEquals("IllegalArgumentException", (env.puller(broken, dao).pull() as PullResult.Failed).type)
     }
 
-    /** 卡 186d 必测 1：关闭前的使用不丢。T0 已覆盖、T1 事件、T2 关、T3 事件（关闭期间）、T4 开、T5 事件；
+    /** 关闭前的使用不丢。T0 已覆盖、T1 事件、T2 关、T3 事件（关闭期间）、T4 开、T5 事件；
      *  拉取保留 T1、T5，丢弃 T3；缺口从关闭时刻 T2 起算（不是上次采集时刻），且只写一条 disabled [T2, T4)。 */
     @Test fun eventsBeforeSwitchOffAreKeptAndDisabledGapStartsAtDisabledAt() = runBlocking {
         val dao = FakeDao()
@@ -235,7 +235,7 @@ class ScreenTimePullerTest {
         assertEquals(t4, gap.untilAt)
     }
 
-    /** 卡 186d 必测 2：第一次打开（从未提交过）起点不早于 enabledAt，不写任何缺口。 */
+    /** 第一次打开（从未提交过）起点不早于 enabledAt，不写任何缺口。 */
     @Test fun firstPullAfterEnableStartsAtEnabledAtAndWritesNoGap() = runBlocking {
         val dao = FakeDao()
         val env = FakeSettings(on = false)
@@ -247,7 +247,7 @@ class ScreenTimePullerTest {
         assertEquals(0, dao.gaps.size)
     }
 
-    /** 卡 186d 必测 3（升级兼容，186c「重新打开」测试按新语义改写）：关闭过但没有关闭时刻（disabledAt == 0）
+    /** 升级兼容：关闭过但没有关闭时刻（disabledAt == 0）
      *  且上次覆盖早于本次打开，沿用 186c 行为——起点圈到 enabledAt，缺口 disabled [上次覆盖, enabledAt)；
      *  覆盖推进后不重复写。 */
     @Test fun legacyReopenWithoutDisabledAtKeeps186cBehavior() = runBlocking {
@@ -272,7 +272,7 @@ class ScreenTimePullerTest {
         assertEquals(1, dao.gaps.size) // 覆盖已推进，不重复写
     }
 
-    /** 卡 186d 必测 4：缺口不重复。事件源在 since 抛错时不写任何缺口、覆盖进度不变；随后一次成功拉取只写一条缺口。 */
+    /** 缺口不重复。事件源在 since 抛错时不写任何缺口、覆盖进度不变；随后一次成功拉取只写一条缺口。 */
     @Test fun gapIsNotWrittenWhenSourceThrowsAndCommitsOnceOnSuccess() = runBlocking {
         val dao = FakeDao()
         val env = FakeSettings(on = true)

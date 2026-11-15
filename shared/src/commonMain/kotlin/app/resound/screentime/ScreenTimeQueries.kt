@@ -1,6 +1,6 @@
 package app.resound.screentime
 
-/** 六种缺口的修复文案，卡 186a 定死；落库行遇到未知代码直接抛错（fail fast）。 */
+/** 六种缺口的修复文案已定死；落库行遇到未知代码直接抛错（fail fast）。 */
 private fun fixFor(code: String): String = when (code) {
     GapCode.USAGE_ACCESS_MISSING -> "设置 → 使用情况访问 → 回响 开启"
     GapCode.NOTIFICATION_ACCESS_MISSING -> "设置 → 通知使用权 → 回响 开启"
