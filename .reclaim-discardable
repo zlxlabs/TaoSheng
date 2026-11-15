@@ -1,0 +1,8 @@
+# 可由源码再生成的构建产物，回收 worktree 时允许丢弃（规则见 agent-config scripts/git/lib/worktree-reclaim.sh）
+# 只写根锚定前缀；tools/*-probe/private/、.codex-logs/、local.properties、签名文件不可再生成，不得列入
+/build/
+/app/build/
+/shared/build/
+/devices/build/
+/.gradle/
+/.kotlin/
