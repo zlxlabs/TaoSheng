@@ -308,15 +308,20 @@ internal class SubscriptionRuntime(
         return "更新 $count 天的文档"
     }
     private suspend fun applyScreenTime(files: MutableMap<String, String>, s: PushSubscription, today: LocalDate) {
-        val path = MemoryFolder.dailyPath(today)
-        val markdown = if (s.screenTime) screenTimeMarkdown(today) else null
-        val existing = files[path]
-        if (markdown == null) {
-            if (existing != null) files[path] = replaceScreenTimeSection(existing, null)
-            return
+        val todayPath = MemoryFolder.dailyPath(today)
+        val paths = files.keys.filter { it.startsWith("daily/") && SCREEN_TIME_MARKER in files.getValue(it) }.toMutableSet()
+        paths += todayPath
+        for (path in paths) {
+            val date = LocalDate.parse(path.substringAfterLast('/').take(10))
+            val markdown = if (s.screenTime) screenTimeMarkdown(date) else null
+            val existing = files[path]
+            if (markdown == null) {
+                if (existing != null) files[path] = replaceScreenTimeSection(existing, null)
+                continue
+            }
+            val base = existing ?: MemoryFolder.card("每日记录", "$date", "屏幕时间", "$date · 屏幕时间", 0, "")
+            files[path] = replaceScreenTimeSection(base, markdown)
         }
-        val base = existing ?: MemoryFolder.card("每日记录", "$today", "屏幕时间", "$today · 屏幕时间", 0, "")
-        files[path] = replaceScreenTimeSection(base, markdown)
     }
 }
 
