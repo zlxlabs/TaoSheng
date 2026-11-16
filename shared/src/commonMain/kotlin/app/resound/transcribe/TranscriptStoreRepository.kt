@@ -79,8 +79,9 @@ class TranscriptStoreRepository(
                 playbackHeld = segment.playbackDigest == 1)
         } }.flowOn(io)
     }
-    override fun transcribeAnyway(segmentId: Long) { scope.launch {
-        if (isAudioFile(FileRef(dao.segment(segmentId).path)) && dao.transcribeAnyway(segmentId) > 0) runNowAction()
+    override fun transcribeAnyway(segmentId: Long, playbackDigest: Int) { scope.launch {
+        check(playbackDigest == 1 || playbackDigest == 2) { "playbackDigest 只能是 1 或 2" }
+        if (isAudioFile(FileRef(dao.segment(segmentId).path)) && dao.transcribeAnyway(segmentId, playbackDigest) > 0) runNowAction()
     } }
     override fun allowPlaybackDigest(segmentId: Long) { scope.launch { dao.allowPlaybackDigest(segmentId) } }
     override fun runNow() = runNowAction()

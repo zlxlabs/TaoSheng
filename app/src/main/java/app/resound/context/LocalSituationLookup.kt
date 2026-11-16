@@ -44,7 +44,12 @@ class LocalSituationLookup internal constructor(
                         if (!it.step() || it.isNull(0)) null else it.getLong(0) to it.getLong(1)
                     }
                 },
-                devicePlayback = { from, until -> AppGraph.playbackQueries?.overlapping(from, until).orEmpty() })
+                devicePlayback = { from, until ->
+                    app.resound.digest.playbackRecordsForPrompt(
+                        titleEnabled = AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value,
+                        includeAppPlayback = AppGraph::digestSettings.isInitialized && AppGraph.digestSettings.includeAppPlayback.value,
+                    ) { AppGraph.playbackQueries?.overlapping(from, until).orEmpty() }
+                })
         }
 
     }

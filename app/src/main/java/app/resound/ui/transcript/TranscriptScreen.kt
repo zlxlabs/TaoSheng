@@ -227,7 +227,7 @@ fun TranscriptScreen(
             val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
             val id = seg.segmentId
             SegmentCard(seg, Modifier.animateItem().then(if (selection.active) Modifier.trackRow(selection, id) else Modifier),
-                realtime, onTranscribeAnyway = { repo.transcribeAnyway(id) },
+                realtime, onTranscribeAnyway = { digest -> repo.transcribeAnyway(id, digest) },
                 onAllowPlaybackDigest = { repo.allowPlaybackDigest(id) },
                 onRetry = { repo.retrySegment(id) }, onDelete = { repo.deleteFailed(id) },
                 selected = if (selection.active) id in selection.ids else null,
@@ -490,18 +490,7 @@ private fun SettingsCard(settings: TranscribeSettings, onSaved: () -> Unit) {
             Toggle(wifiOnly) { settings.setWifiOnly(it) }
         }
 
-        if (app.resound.AppGraph.isPlaybackSkipReady) {
-            val skip by app.resound.AppGraph.playbackSkip.enabled.collectAsStateWithLifecycle()
-            if (!local) Divider()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("外放声音时不转写", style = RsType.body, color = c.text)
-                    Text(if (skip) "手机扬声器在放视频、音乐时录到的先不转写，原话里可单段“仍然转写”；戴耳机不受影响"
-                        else "外放时录到的也照常转写，视频里的声音可能混进原话", style = RsType.caption, color = c.textSecondary)
-                }
-                Toggle(skip) { app.resound.AppGraph.playbackSkip.setEnabled(it) }
-            }
-        }
+        PlaybackSkipCard(local)
         PlaybackTitleCard()
         if (app.resound.AppGraph.isAsrSpeedReady) SpeakerOptions()
 
@@ -712,7 +701,7 @@ private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) = app.resound.ui.ve
 // ---------- 每段录音 ----------
 
 @Composable
-private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Boolean, onTranscribeAnyway: () -> Unit,
+private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Boolean, onTranscribeAnyway: (Int) -> Unit,
                         onAllowPlaybackDigest: () -> Unit,
                         onRetry: () -> Unit = {}, onDelete: () -> Unit = {},
                         /** 多选时是否选中；不在多选为 null */
@@ -747,10 +736,7 @@ private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Bo
                 TranscriptStatus.Pending -> Note(if (realtime) "马上转写" else "等下一轮转写")
                 TranscriptStatus.Empty -> Note("只有声音，没识别出说话内容")
                 TranscriptStatus.Failed -> Note(seg.error ?: "没转成功，可以在上面点重试", c.critical)
-                TranscriptStatus.SkippedPlayback -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Note("手机外放声音时录的，没有转写", modifier = Modifier.weight(1f))
-                    if (seg.audioAvailable) Pill("仍然转写", filled = false, onClick = onTranscribeAnyway)
-                }
+                TranscriptStatus.SkippedPlayback -> SkippedPlaybackActions(seg, onTranscribeAnyway)
                 // 修不好的：灰色说明 + 删除；不再挂红字提醒
                 TranscriptStatus.Abandoned -> FailedActions(seg.error ?: "录音损坏，无法转写", retry = null, onDelete = onDelete)
                 // 忽略的、或失败超过 3 天的：灰色说明 + 重试 / 删除

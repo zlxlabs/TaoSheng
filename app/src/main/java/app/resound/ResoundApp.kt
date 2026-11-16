@@ -92,6 +92,11 @@ class ResoundApp : Application() {
         AppGraph.prompts = app.resound.prompts.LocalPromptTemplates(this)
         AppGraph.inputs = inputs
         AppGraph.playbackSkip = AndroidPlaybackSkipSettings(this)
+        val transcribePrefs = getSharedPreferences("transcribe", MODE_PRIVATE)
+        AppGraph.playbackDigestSettings = app.resound.transcribe.PlaybackDigestSettings(
+            readBoolean = { key, def -> transcribePrefs.getBoolean(key, def) },
+            saveBoolean = { key, value -> transcribePrefs.edit().putBoolean(key, value).commit() },
+        )
         AppGraph.playback = PlaybackMonitor(this, scope)
         CaptureNotifications.channels(this)
         controller = AndroidCaptureController(this, store)

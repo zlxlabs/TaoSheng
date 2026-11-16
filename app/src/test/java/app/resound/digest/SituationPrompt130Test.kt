@@ -173,4 +173,45 @@ class SituationPrompt130Test {
         SituationPrompt(true, lookup, mapOf(1L to 0L, 3L to 2999L)).transcript(lines, zone = zone)
         assertEquals(emptyList<Pair<Long, Long>>(), lookup.playbackCalls)
     }
+
+    private fun gatedLookup(
+        titleEnabled: Boolean,
+        includeAppPlayback: Boolean,
+        records: List<DevicePlayback>,
+        queried: () -> Unit,
+    ) = object : SituationLookup {
+        override suspend fun placeDuring(start: Long, end: Long): PlaceAt? = null
+        override suspend fun envDuring(start: Long, end: Long, limit: Int) = emptyList<String>()
+        override suspend fun staysAt(placeName: String, from: Long, to: Long) = emptyList<PlaceAt>()
+        override suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> =
+            playbackRecordsForPrompt(titleEnabled, includeAppPlayback) {
+                queried()
+                records
+            }
+    }
+
+    private val titledRecord = listOf(DevicePlayback("app.podcast.cosmos", "小宇宙", "某集", null, 0, 10_000))
+
+    @Test fun titleOffDoesNotQueryExistingPlaybackRecords() = runBlocking {
+        var queried = false
+        val lookup = gatedLookup(titleEnabled = false, includeAppPlayback = true, titledRecord) { queried = true }
+        val (text, _) = SituationPrompt(true, lookup, playing).transcript(oneLine, zone = zone)
+        assertFalse(queried)
+        assertEquals(listOf("【外放：手机在外放】"), text.lines().filter { it.startsWith("【") })
+        assertFalse(text.contains("小宇宙"))
+        assertFalse(text.contains("某集"))
+    }
+
+    /** DigestRunner.kt:213 与 RedoFactory.kt:58 共用 SituationPrompt(includeSituation, lookup, playbackMillis)。 */
+    @Test fun includeAppPlaybackOffKeepsOnlySpeakerHintForDigestAndRedo() = runBlocking {
+        var queried = false
+        val lookup = gatedLookup(titleEnabled = true, includeAppPlayback = false, titledRecord) { queried = true }
+        val prompt = SituationPrompt(true, lookup, playing)
+        val (text, _) = prompt.transcript(oneLine, zone = zone)
+        assertFalse(queried)
+        assertEquals(listOf("【外放：手机在外放】"), text.lines().filter { it.startsWith("【") })
+        assertFalse(text.contains("小宇宙"))
+        assertFalse(text.contains("某集"))
+        assertFalse(text.contains("app.podcast"))
+    }
 }

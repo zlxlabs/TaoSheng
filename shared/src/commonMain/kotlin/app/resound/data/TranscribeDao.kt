@@ -159,8 +159,9 @@ abstract class TranscribeDao {
     @Query("DELETE FROM segments WHERE id = :id")
     abstract suspend fun deleteSegmentRow(id: Long)
 
-    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = 1 WHERE id = :id AND status = 'SkippedPlayback'")
-    abstract suspend fun transcribeAnyway(id: Long): Int
+    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = :playbackDigest WHERE id = :id AND status = 'SkippedPlayback'")
+    abstract suspend fun transcribeAnyway(id: Long, playbackDigest: Int): Int
+    suspend fun transcribeAnyway(id: Long): Int = transcribeAnyway(id, 1)
 
     /** 放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
     @Query("UPDATE segments SET playbackDigest = 2 WHERE id = :id AND playbackDigest = 1")
