@@ -98,13 +98,11 @@ class ScreenTimePushTest {
             val after = t(22, 1)
             repo.screenTimeMessage = { d -> buildScreenTimeMessage(d, after, zone, null) }
             assertEquals(0, server.requestCount)
-            FailureNotes.resetForTest()
             repo.dispatchScreenTime(after, zone)
             assertEquals(0, server.requestCount)
             assertNull(prefs.getString("screen-time-sent-$id", null))
             assertTrue("跳过原因要可见：${FailureNotes.dump()}", FailureNotes.dump().contains("push/screen-time-skip"))
             repo.screenTimeMessage = { d -> buildScreenTimeMessage(d, after, zone, ScreenTimeReader { _, _ -> ScreenTimeResult.DISABLED }) }
-            FailureNotes.resetForTest()
             repo.dispatchScreenTime(after, zone)
             assertEquals(0, server.requestCount)
             assertNull(prefs.getString("screen-time-sent-$id", null))
