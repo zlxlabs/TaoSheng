@@ -2,7 +2,7 @@ package app.resound.screentime
 
 /**
  * 屏幕时间的读取约定（Claude 定稿，签名不得自行修改）。
- * 问问工具、推送、订阅文档、情境行都只依赖本文件；实现是 ScreenTimeQueries。
+ * 本版播放记录只读走 [PlaybackQueries]；[ScreenTimeReader] 仍保留签名，本 PR 不装配实现。
  * 区间一律左闭右开、纪元毫秒。
  */
 
@@ -50,7 +50,7 @@ object GapCode {
 const val PLAYBACK_SOURCE = "playback"
 
 /**
- * 媒体会话变化的接收方。安卓通知监听服务经 AppGraph 取得并调用；实现负责总开关门控
+ * 媒体会话变化的接收方。安卓通知监听服务经 AppGraph 取得并调用；实现负责「记录播放标题」门控
  * （关闭时全部调用直接返回、不写库）与落库。[sessionKey] 是平台给的不透明会话标识，同一会话不变。
  * 时间一律纪元毫秒。落库失败照常上抛（fail fast），由调用方记一行 `playback:` 前缀的日志。
  */

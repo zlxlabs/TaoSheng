@@ -64,13 +64,3 @@
 1. **不把“必须有密钥”写死**：判断能不能调用某个服务，统一走提供方/设置的入口（如 `canUseWithoutKey`、提供方选择），不要在各处自己判断“密钥是否为空”。
 2. **失败原因要能扩展**：整理、转写等结果和错误类型用可增加种类的枚举或密封类，调用方按种类处理；以后会加“需要登录 / 点数不足 / 已过期”，这些不能被当成“密钥错误”，自动任务遇到时按“需用户处理”对待。
 3. **保留每次请求的唯一凭据**：整理的进行中凭据（防重复付费）等“同一请求只算一次”的机制，重构时不能删掉或弱化；以后服务端靠它保证同一请求只扣一次点。
-
-## 上游贡献约定（0xCoach/TaoSheng 复刻仓）
-
-本仓是 `0xCoach/TaoSheng` 的公开复刻，CI 接入 zlxlabs/gate-hub 的 Required Gate v2（Ref zlxlabs/gate-hub#2410）。
-
-- 向上游贡献：从上游 `main` 新开分支，只带功能提交；不带 `.github/workflows/gate*.yml`、`scripts/gate-quality`、`mise.toml`、`.devcontainer/` 等 gate 附属文件（这些只属于本复刻）。
-- CI 分工：`gate` = 边界检查 + 模型主审（gate-hub v2）；`android.yml` / `ios.yml` = 编译与单测。
-- 合并前须绿：合并闸只要求 `gate / primary`，`Android 检查` 红不挡合并——合并前人工核对 Android/iOS 两个工作流在同一 head 上均为 SUCCESS。
-- 复刻与上游的 build 文件（`settings.gradle.kts`、`shared/`、`app/`、`devices/`、`tools/`）保持零分歧，避免两岸漂移。
-- 同步上游：把上游 `main` 合进本仓 `main`（合并提交，不 rebase）；复刻专属差异只有上面这些 gate 附属文件、`gradle.properties` 的内存设置、本节，以及删掉的 `.github/workflows/cla.yml`（上游的 CLA 机器人，复刻不需要）。本仓自己的任务卡文档放 `docs/任务卡/屏幕时间/` 等子目录，避免与上游卡号重名。
