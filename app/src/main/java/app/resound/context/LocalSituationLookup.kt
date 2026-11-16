@@ -44,6 +44,12 @@ class LocalSituationLookup internal constructor(
                         if (!it.step() || it.isNull(0)) null else it.getLong(0) to it.getLong(1)
                     }
                 },
+                appSessions = { from, until ->
+                    app.resound.digest.foregroundSessionsForPrompt(
+                        AppGraph.isScreenTimeReady && AppGraph.screenTimeSettings.enabled.value,
+                        AppGraph.isDigestSettingsReady && AppGraph.digestSettings.includeAppPlayback.value,
+                    ) { AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty() }
+                },
                 devicePlayback = { from, until ->
                     if (!app.resound.digest.allowAppPlaybackInPrompt(
                             AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value,

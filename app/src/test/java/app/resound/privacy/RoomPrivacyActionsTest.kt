@@ -153,8 +153,8 @@ class RoomPrivacyActionsTest {
         assertEquals(0, count("memory_events")); assertEquals(0, count("memory_items"))
     }
 
-    /** 按时间遗忘同时删屏幕事件、下限提到区间终点。 */
-    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloor() = runBlocking {
+    /** 按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
+    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloorSoPullStartsAfterIt() = runBlocking {
         db.screenTime().insertEvents(listOf(
             ScreenEventRow(at = now - 30_000, pkg = "a", cls = "", type = 1),
             ScreenEventRow(at = now - 90_000, pkg = "a", cls = "", type = 1)))
@@ -163,6 +163,17 @@ class RoomPrivacyActionsTest {
         assertEquals(1, count("screen_events"))
         assertEquals(now - 90_000, db.screenTime().events(0, now).single().at)
         assertEquals(now, db.screenTime().state(SCREEN_SOURCE)?.floor)
+        var sinceFrom = 0L
+        val puller = ScreenTimePuller(
+            ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
+                readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now }),
+            object : ScreenEventSource {
+                override fun permitted() = true
+                override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }
+                override suspend fun appNames(pkgs: Set<String>) = emptyMap<String, String>()
+            }, db.screenTime(), now = { now }, denied = { it is SecurityException })
+        puller.pull()
+        assertTrue(sinceFrom >= now)
     }
 
     /** 必测 8：区间内的播放行删除，跨左边界的行截断到 from。 */
