@@ -6,6 +6,7 @@ import app.resound.data.retryFailed
 
 import app.resound.push.attachSubscriptions
 import app.resound.push.attachFootprint
+import app.resound.push.attachScreenTime
 
 import android.app.Application
 import app.resound.capture.*
@@ -353,6 +354,7 @@ class ResoundApp : Application() {
         registerActivityLifecycleCallbacks(app.resound.update.UpdateForegroundChecks(updater, scope))
         pushChannels.attachSubscriptions(this, database, backupRepository, scope)
         pushChannels.attachFootprint(this, scope)
+        pushChannels.attachScreenTime(this, scope)
         app.resound.recordings.attachRecordingArchive(this, database, pushChannels, scope)
         scope.launch { transcribeRunner.recoverOnStartup(); transcribeRunner.withIdleAudio { voiceprintRepository.cleanupAudio() } }
         val folderImports = app.resound.importer.AndroidFolderImports(this, database, scope,

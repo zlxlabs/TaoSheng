@@ -31,6 +31,7 @@ internal class SubscriptionRuntime(
 ) {
     var reminderSettings: () -> AppointmentReminders = { AppointmentReminders() }
     var source: suspend (LocalDate?, Boolean) -> PushSnapshot = { _, _ -> throw PushFailure("记忆数据尚未就绪") }
+    var screenTimeMarkdown: suspend (LocalDate) -> String? = { null }
     private val gates = ConcurrentHashMap<Long, Mutex>()
     private val states = ConcurrentHashMap<Long, MutableStateFlow<PushChannelStatus>>()
     private val queued = ConcurrentHashMap<Long, Long>()
@@ -160,6 +161,7 @@ internal class SubscriptionRuntime(
                 val data = raw.select(s, since, today, zone())
                 val generator = MemoryFolder(today, zone())
                 val files = (if (summaryOnly) summaryFiles(data, s, state, generator) else generator.generate(data, s)).toMutableMap()
+                applyScreenTime(files, s, today)
                 val current = RecordDelta.records(data, s)
                 if (!reminderOnly) trace.requireContent(if (summaryOnly) current.keys.count { it.startsWith("card:") || it.startsWith("review:") } else current.size)
                 val full = !s.incremental || rebuild || due.optLong("fullAt").let { it > 0 && it <= started }
@@ -236,6 +238,7 @@ internal class SubscriptionRuntime(
         val files = state.templates.keys().asSequence().associateWith { state.templates.getString(it) }.toMutableMap()
         val base = files[path] ?: MemoryFolder.card("每日记录", "$date", "提醒", "$date · 提醒", reminders.size, "")
         files[path] = base.substringBefore("<!-- resound:reminders -->").trimEnd() + "\n\n<!-- resound:reminders -->\n## 提醒\n$body\n"
+        applyScreenTime(files, channel.subscription, date)
         if (channel.kind == PushKind.MarkdownFolder) {
             if ("README.md" !in files) files["README.md"] = MemoryFolder(date, zone()).generate(PushSnapshot(), channel.subscription).getValue("README.md")
             // 这里只改当天一份文件，其余模板原样保留。
@@ -299,4 +302,25 @@ internal class SubscriptionRuntime(
         }
         return "更新 $count 天的文档"
     }
+    private suspend fun applyScreenTime(files: MutableMap<String, String>, s: PushSubscription, today: LocalDate) {
+        val path = MemoryFolder.dailyPath(today)
+        val markdown = if (s.screenTime) screenTimeMarkdown(today) else null
+        val existing = files[path]
+        if (markdown == null) {
+            if (existing != null) files[path] = replaceScreenTimeSection(existing, null)
+            return
+        }
+        val base = existing ?: MemoryFolder.card("每日记录", "$today", "屏幕时间", "$today · 屏幕时间", 0, "")
+        files[path] = replaceScreenTimeSection(base, markdown)
+    }
+}
+
+internal const val SCREEN_TIME_MARKER = "<!-- resound:screen-time -->"
+
+internal fun replaceScreenTimeSection(content: String, markdown: String?): String {
+    val stripped = content.substringBefore(SCREEN_TIME_MARKER).trimEnd()
+    val body = markdown?.trimEnd()?.takeIf { it.isNotEmpty() }
+    return if (body == null) {
+        if (stripped.isEmpty()) stripped else stripped + "\n"
+    } else stripped + "\n\n$SCREEN_TIME_MARKER\n## 屏幕时间\n$body\n"
 }
