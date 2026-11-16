@@ -2,7 +2,7 @@ package app.resound.screentime
 
 /**
  * 屏幕时间的读取约定（Claude 定稿，签名不得自行修改）。
- * 问问工具、推送、订阅文档、情境行都只依赖本文件；实现是 ScreenTimeQueries。
+ * 播放记录只读走 [PlaybackQueries]；屏幕使用走 [ScreenTimeQueries]（实现 [ScreenTimeReader]）。
  * 区间一律左闭右开、纪元毫秒。
  */
 
@@ -36,7 +36,7 @@ data class ScreenTimeResult(
     }
 }
 
-/** 缺口代码，共六个；coverage_lag 只在查询时现算，不落库。 */
+/** 缺口代码；coverage_lag 只在查询时现算，不落库。privacy_deleted 由删除入口写入，不含 App 信息。 */
 object GapCode {
     const val USAGE_ACCESS_MISSING = "usage_access_missing"
     const val NOTIFICATION_ACCESS_MISSING = "notification_access_missing"
@@ -44,13 +44,17 @@ object GapCode {
     const val COVERAGE_LAG = "coverage_lag"
     const val LISTENER_DISCONNECTED = "listener_disconnected"
     const val DISABLED = "disabled"
+    const val PRIVACY_DELETED = "privacy_deleted"
 }
+
+/** 这些缺口覆盖的时间不得被重放成使用段。 */
+val SESSION_BLOCKING_GAP_CODES = setOf(GapCode.PULL_FAILED, GapCode.DISABLED, GapCode.PRIVACY_DELETED)
 
 /** 播放记录的覆盖来源名（与 [SCREEN_SOURCE] 并列）。 */
 const val PLAYBACK_SOURCE = "playback"
 
 /**
- * 媒体会话变化的接收方。安卓通知监听服务经 AppGraph 取得并调用；实现负责总开关门控
+ * 媒体会话变化的接收方。安卓通知监听服务经 AppGraph 取得并调用；实现负责「记录播放标题」门控
  * （关闭时全部调用直接返回、不写库）与落库。[sessionKey] 是平台给的不透明会话标识，同一会话不变。
  * 时间一律纪元毫秒。落库失败照常上抛（fail fast），由调用方记一行 `playback:` 前缀的日志。
  */

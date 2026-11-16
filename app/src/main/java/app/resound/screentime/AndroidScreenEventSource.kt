@@ -6,10 +6,9 @@ import android.content.Context
 import app.resound.capture.MicHolderGuess
 
 /** 系统使用情况事件源；授权判断与 MicHolderGuess 同源，不复制第二份逻辑。 */
-class AndroidScreenEventSource(context: Context) : ScreenEventSource {
+class AndroidScreenEventSource(private val context: Context) : ScreenEventSource {
     private val guess = MicHolderGuess(context)
     private val stats = context.getSystemService(UsageStatsManager::class.java)
-    private val pm = context.packageManager
 
     override fun permitted(): Boolean = guess.permitted()
 
@@ -25,10 +24,5 @@ class AndroidScreenEventSource(context: Context) : ScreenEventSource {
         return out
     }
 
-    override suspend fun appNames(pkgs: Set<String>): Map<String, String> = buildMap {
-        for (pkg in pkgs) runCatching {
-            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-        }.getOrNull()?.let { put(pkg, it) }
-        // 未安装或系统已撤包名没有显示名，跳过即可，查询侧会回退到包名。
-    }
+    override suspend fun appNames(pkgs: Set<String>): Map<String, String> = appLabels(context, pkgs)
 }

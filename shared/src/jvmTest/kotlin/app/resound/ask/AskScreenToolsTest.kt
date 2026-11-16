@@ -222,6 +222,45 @@ class AskScreenToolsTest {
         assertTrue(out.contains(""""truncated":true"""))
     }
 
+    private val privacyJson =
+        """{"totals":[],"sessions":[],"devicePlayback":[],"coverageUntil":null,"gaps":[],"truncated":false,"notice":"用户关闭了整理时带上 App 与播放信息"}"""
+
+    @Test fun privacyOffReturnsNoticeWithoutQuerying() = runBlocking {
+        var called = 0
+        val out = AskScreenToolsCore({ called++; error("不应查库") }, zone, includeAppPlayback = { false })
+            .execute("""{"from":"2026-11-13 23:00","to":"2026-11-14 01:00"}""", mutableListOf())
+        assertEquals(0, called)
+        assertEquals(privacyJson, out)
+    }
+
+    @Test fun screenOffReturnsNoticeWithoutQuerying() = runBlocking {
+        var called = 0
+        val out = AskScreenToolsCore({ called++; error("不应查库") }, zone, screenEnabled = { false })
+            .execute("""{"from":"2026-11-13 23:00","to":"2026-11-14 01:00"}""", mutableListOf())
+        assertEquals(0, called)
+        assertEquals(disabledJson, out)
+    }
+
+    @Test fun titleOffStripsPlaybackFromSerializedResult() = runBlocking {
+        val wxFrom = AskTime.timestamp("2026-11-13 23:10", false, zone)
+        val wxTo = AskTime.timestamp("2026-11-13 23:55", false, zone)
+        val playFrom = AskTime.timestamp("2026-11-13 23:20", false, zone)
+        val playTo = AskTime.timestamp("2026-11-13 23:40", false, zone)
+        val reader = RecordingReader(ScreenTimeResult(
+            enabled = true,
+            sessions = listOf(NamedAppSession("com.tencent.mm", "微信", wxFrom, wxTo)),
+            coverageUntil = wxTo,
+            gaps = emptyList(),
+            devicePlayback = listOf(DevicePlayback("app.podcast.cosmos", "小宇宙", "某集", null, playFrom, playTo)),
+        ))
+        val out = AskScreenToolsCore({ reader }, zone, playbackTitlesEnabled = { false })
+            .execute("""{"from":"2026-11-13 23:00","to":"2026-11-14 01:00"}""", mutableListOf())
+        assertEquals(1, reader.calls)
+        assertFalse(out.contains("小宇宙"))
+        assertTrue(out.contains(""""devicePlayback":[]"""))
+        assertTrue(out.contains("微信"))
+    }
+
     private class RecordingReader(private val result: ScreenTimeResult) : ScreenTimeReader {
         var calls = 0
         var from = 0L

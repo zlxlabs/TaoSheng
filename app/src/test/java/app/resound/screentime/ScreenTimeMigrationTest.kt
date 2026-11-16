@@ -1,7 +1,6 @@
 package app.resound.screentime
 
 import android.app.Application
-import android.content.Context
 import androidx.room.Room
 import androidx.work.Configuration
 import androidx.work.testing.SynchronousExecutor
@@ -80,7 +79,7 @@ class ScreenTimeMigrationTest {
         assertEquals(700L, db.screenTime().state(SCREEN_SOURCE)?.floor)
     }
 
-    /** E2E：总开关打开 → Worker.doWork() → pull() → 假事件源的 RESUMED 出现在 events 且覆盖到注入时钟。 */
+    /** 总开关打开 → Worker.doWork() → pull() → 假事件源的 RESUMED 出现在 events 且覆盖到注入时钟。 */
     @Test fun workerPullRoutesFakeResumedEventIntoDaoAndAdvancesCoverage() = runBlocking(Dispatchers.IO) {
         WorkManagerTestInitHelper.initializeTestWorkManager(context,
             Configuration.Builder().setExecutor(SynchronousExecutor()).build())
@@ -92,8 +91,9 @@ class ScreenTimeMigrationTest {
                 override suspend fun since(from: Long, until: Long) = listOf(RawScreenEvent(clock - 1_000, "com.example.app", "com.example.MainActivity", 1))
                 override suspend fun appNames(pkgs: Set<String>) = mapOf("com.example.app" to "示例")
             }
-            val settings = ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, _ -> savedPull }, saveLong = { _, v -> savedPull = v; true }, now = { clock })
+            val settings = ScreenTimeSettings(readBoolean = { _, _ -> true },
+                persist = { _, longs, _ -> longs[ScreenTimeSettings.LAST_PULL_KEY]?.let { savedPull = it }; true },
+                readLong = { _, _ -> savedPull }, now = { clock })
             val puller = ScreenTimePuller(settings, source, db.screenTime(), now = { clock },
                 denied = { it is SecurityException }, diagnostic = {})
             AppGraph.screenTimePuller = puller

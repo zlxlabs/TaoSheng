@@ -11,16 +11,22 @@ import kotlinx.datetime.TimeZone
 class AskScreenToolsCore(
     private val reader: () -> ScreenTimeReader?,
     private val zone: TimeZone,
+    private val includeAppPlayback: () -> Boolean = { true },
+    private val screenEnabled: () -> Boolean = { true },
+    private val playbackTitlesEnabled: () -> Boolean = { true },
 ) {
     suspend fun execute(args: String, sources: MutableList<AskSource>): String {
         val input = JSONObject(args)
         val from = AskTime.timestamp(input.getString("from"), false, zone)
         val to = AskTime.timestamp(input.getString("to"), true, zone)
         if (to <= from || to - from > MAX_SPAN_MS) throw AskDateException(IllegalArgumentException("查询区间无效"))
+        if (!includeAppPlayback()) return PRIVACY_DISABLED
+        if (!screenEnabled()) return DISABLED
         val current = reader() ?: return DISABLED
         val result = current.sessions(from, to)
         if (!result.enabled) return DISABLED
-        return enabled(result, sources)
+        val visible = if (playbackTitlesEnabled()) result else result.copy(devicePlayback = emptyList())
+        return enabled(visible, sources)
     }
 
     private fun enabled(result: ScreenTimeResult, sources: MutableList<AskSource>): String {
@@ -96,5 +102,7 @@ class AskScreenToolsCore(
         const val MAX_SPAN_MS = 10L * 24 * 60 * 60 * 1000
         const val DISABLED =
             """{"totals":[],"sessions":[],"devicePlayback":[],"coverageUntil":null,"gaps":[],"truncated":false,"notice":"屏幕时间未开启，没有 App 使用数据。"}"""
+        const val PRIVACY_DISABLED =
+            """{"totals":[],"sessions":[],"devicePlayback":[],"coverageUntil":null,"gaps":[],"truncated":false,"notice":"用户关闭了整理时带上 App 与播放信息"}"""
     }
 }

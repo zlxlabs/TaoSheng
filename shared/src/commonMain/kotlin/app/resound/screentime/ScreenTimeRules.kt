@@ -46,10 +46,13 @@ object ScreenTimeRules {
             val page = e.pkg to e.cls
             when (e.type) {
                 ScreenEventType.RESUMED -> {
+                    // 锁屏界面本身不产生 Activity RESUMED；出现 RESUMED 即视为已解锁。
+                    // 小米等机型可能只记 KEYGUARD_SHOWN 不记 KEYGUARD_HIDDEN，不能一直把后续使用判成锁屏。
+                    if (keyguard) keyguard = false
                     if (front != null && front != page && openFrom != null) close(e.at, CloseReason.SWITCH)
                     front = page
-                    // 同包同页重复 RESUMED 不重复开段；熄屏或锁屏中只更新前台不开段。
-                    if (screenOn && !keyguard && openFrom == null) openFrom = e.at
+                    // 同包同页重复 RESUMED 不重复开段；熄屏中只更新前台不开段。
+                    if (screenOn && openFrom == null) openFrom = e.at
                 }
                 ScreenEventType.PAUSED, ScreenEventType.STOPPED -> {
                     // 只在离开的页面正是当前前台页面时收尾；同 App 切页时旧页的 STOPPED 被忽略。
@@ -108,6 +111,31 @@ object ScreenTimeRules {
             }
         }
         return merged.map { AppSession(it.pkg, it.from, it.until) }
+    }
+
+    /**
+     * 从使用段里挖掉 [blocked] 各左闭右开区间。已删除、停采、拉取失败的时间不得再被算成使用。
+     * 一段可能被拆成多段；与缺口不相交的段原样保留。
+     */
+    fun exclude(sessions: List<AppSession>, blocked: List<Pair<Long, Long>>): List<AppSession> {
+        if (blocked.isEmpty() || sessions.isEmpty()) return sessions
+        val cuts = blocked.filter { it.first < it.second }
+        if (cuts.isEmpty()) return sessions
+        return sessions.flatMap { session ->
+            var pieces = listOf(session)
+            for ((bFrom, bUntil) in cuts) {
+                pieces = pieces.flatMap { piece ->
+                    when {
+                        bUntil <= piece.from || bFrom >= piece.until -> listOf(piece)
+                        bFrom <= piece.from && bUntil >= piece.until -> emptyList()
+                        bFrom <= piece.from -> listOf(piece.copy(from = bUntil))
+                        bUntil >= piece.until -> listOf(piece.copy(until = bFrom))
+                        else -> listOf(piece.copy(until = bFrom), piece.copy(from = bUntil))
+                    }.filter { it.from < it.until }
+                }
+            }
+            pieces
+        }
     }
 
     /** 按包聚合总时长：时长降序，同时长按包名升序。 */

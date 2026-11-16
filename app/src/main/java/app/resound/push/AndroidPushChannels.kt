@@ -295,6 +295,17 @@ class AndroidPushChannels internal constructor(
         }
     }
 
+    override suspend fun agentPrompt(id: Long): String? = withContext(Dispatchers.IO) {
+        val row = readChannels().firstOrNull { it.getLong("id") == id && it.getString("kind") == PushKind.MarkdownFolder.name } ?: return@withContext null
+        val v = try { values(row) }
+        catch (e: CancellationException) { throw e }
+        catch (caught: Exception) {
+            FailureNotes.record("push/AndroidPushChannels.kt:agentPrompt", caught)
+            return@withContext null }
+        AgentPrompt.text(v["url"].orEmpty(), v["account"].orEmpty(), v["password"].orEmpty(),
+            v["folder"]?.takeIf { it.isNotBlank() } ?: "Resound-Memory", s3 = v["cloudKind"] == "S3")
+    }
+
     internal suspend fun dispatchDailyMemory(date: java.time.LocalDate) {
         // 回顾生成入口不再隐式推全量记录，整理结果严格服从各通道触发器。
         channels.value.filter { it.enabled && it.subscription.summaries && it.kind in setOf(PushKind.MarkdownFolder, PushKind.Notion) }
@@ -413,7 +424,8 @@ class AndroidPushChannels internal constructor(
 
     /**
      * 到点的通道推当天屏幕时间，每个通道每天一次；返回下一次该检查的时刻（没有通道订阅时为 null）。
-     * 总开关关（消息为 null）时不发也不写已发标记；下一次排到明天，避免空转。
+     * 总开关关（消息为 null）时不发也不写已发标记；下一次排到明天，避免空转，
+     * 并在诊断里记一条跳过原因（采集关闭不是错误，但静默跳过会让人以为推送坏了）。
      */
     internal suspend fun dispatchScreenTime(now: Long = System.currentTimeMillis(), zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): Long? {
         val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
@@ -423,7 +435,8 @@ class AndroidPushChannels internal constructor(
             if (now < due || prefs.getString("screen-time-sent-${channel.id}", null) == today.toString()) continue
             if (!built) {
                 message = try { screenTimeMessage(today) } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                    FailureNotes.record("push/screen-time-generate", e); null
+                    FailureNotes.record("push/screen-time-generate", e)
+                    throw e
                 }
                 built = true
             }
@@ -434,6 +447,7 @@ class AndroidPushChannels internal constructor(
             prefs.edit().putString("screen-time-sent-${channel.id}", today.toString()).apply()
         }
         if (built && message == null) {
+            FailureNotes.record("push/screen-time-skip", IllegalStateException("screen time unavailable, daily push skipped"))
             val tomorrow = today.plusDays(1)
             return channels.value.filter { it.enabled && it.subscription.screenTime }.minOfOrNull { ch ->
                 tomorrow.atStartOfDay(zone).plusMinutes(ch.subscription.screenTimeAt.toLong()).toInstant().toEpochMilli()
@@ -528,7 +542,17 @@ class AndroidPushChannels internal constructor(
                 return@withContext false
             }
             val (row, message, testing) = parsed
-            val attempt = attempt(row.getLong("channelId"), message, testing)
+            val outgoing = if (message.topic == PushTopic.ScreenTime) {
+                val rawDate = message.screenTime?.takeUnless { it.isNull("date") }?.optString("date").orEmpty()
+                val date = if (rawDate.isNotEmpty()) java.time.LocalDate.parse(rawDate)
+                    else java.time.Instant.ofEpochMilli(message.at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                screenTimeMessage(date) ?: run {
+                    FailureNotes.record("push/screen-time-stale-dropped", IllegalStateException("screen time pending dropped after recheck"))
+                    outbox.edit().remove(job).commit()
+                    return@withContext false
+                }
+            } else message
+            val attempt = attempt(row.getLong("channelId"), outgoing, testing)
             val again = attempt?.result?.isFailure == true && attemptCount < 2
             if (again) check(outbox.edit().putString(job, row.put("message", attempt!!.snapshot.json()).toString()).commit())
             if (!again) outbox.edit().remove(job).commit()

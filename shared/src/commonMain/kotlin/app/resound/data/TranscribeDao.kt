@@ -65,7 +65,8 @@ abstract class TranscribeDao {
     @Transaction
     @Query("SELECT * FROM segments") abstract suspend fun allAudio(): List<SegmentEntity>
     @Query("""SELECT s.id FROM segments s WHERE EXISTS (SELECT 1 FROM memory_events e
-        WHERE e.starred = 1 AND e.deleted = 0 AND s.startAt < e.endAt AND s.endAt > e.startAt)""")
+        WHERE e.starred = 1 AND e.deleted = 0 AND s.startAt < e.endAt AND s.endAt > e.startAt)
+        OR EXISTS (SELECT 1 FROM marks m WHERE s.startAt < m.at + m.afterMillis AND s.endAt > m.at - m.beforeMillis)""")
     abstract suspend fun starredAudio(): List<Long>
 
     @Query("SELECT EXISTS(SELECT 1 FROM segments WHERE path IN (:ogg, :m4a))")
@@ -159,8 +160,9 @@ abstract class TranscribeDao {
     @Query("DELETE FROM segments WHERE id = :id")
     abstract suspend fun deleteSegmentRow(id: Long)
 
-    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = 1 WHERE id = :id AND status = 'SkippedPlayback'")
-    abstract suspend fun transcribeAnyway(id: Long): Int
+    @Query("UPDATE segments SET status = 'Pending', attempts = 0, nextRetryAt = NULL, error = NULL, completedAt = NULL, playbackDigest = :playbackDigest WHERE id = :id AND status = 'SkippedPlayback'")
+    abstract suspend fun transcribeAnyway(id: Long, playbackDigest: Int): Int
+    suspend fun transcribeAnyway(id: Long): Int = transcribeAnyway(id, 1)
 
     /** 放行暂不整理的外放片段；只从 1 变 2，不触发整理。 */
     @Query("UPDATE segments SET playbackDigest = 2 WHERE id = :id AND playbackDigest = 1")
@@ -196,8 +198,6 @@ abstract class TranscribeDao {
     @Query("SELECT * FROM transcript_lines WHERE voiceInputJson IS NOT NULL AND startAt BETWEEN :from AND :to")
     abstract suspend fun voiceInputs(from: Long, to: Long): List<TranscriptLineEntity>
 
-    @Query("SELECT * FROM segments NOT INDEXED WHERE status IN ('Done', 'Empty', 'SkippedPlayback', 'SkippedEnv', 'Abandoned', 'Quiet') AND completedAt <= :before")
-    abstract suspend fun expired(before: Long): List<SegmentEntity>
     @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun insertUsage(row: AsrUsageEntity)
     @Query("UPDATE asr_usage SET sentMillis = sentMillis + :millis WHERE day = :day")
     abstract suspend fun addUsage(day: String, millis: Long)

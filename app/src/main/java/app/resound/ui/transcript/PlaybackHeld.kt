@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +20,19 @@ import app.resound.transcribe.TranscriptStatus
 import app.resound.ui.theme.Rs
 import app.resound.ui.theme.RsType
 import app.resound.ui.verify.Pill
+
+/** 跳过转写的外放片段：一步选择只转写或转写并整理。 */
+@Composable
+internal fun SkippedPlaybackActions(seg: SegmentTranscript, onTranscribeAnyway: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Note("手机外放声音时录的，没有转写" + skippedAudioHint(seg), modifier = Modifier.weight(1f))
+        if (seg.audioAvailable) {
+            Pill("只转写", filled = false, onClick = { onTranscribeAnyway(1) })
+            Spacer(Modifier.width(8.dp))
+            Pill("转写并整理", filled = false, onClick = { onTranscribeAnyway(2) })
+        }
+    }
+}
 
 /** 已转写片段：外放时录的默认不参与整理，可手动放行。 */
 @Composable

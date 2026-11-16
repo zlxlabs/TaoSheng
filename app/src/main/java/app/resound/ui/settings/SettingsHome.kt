@@ -184,11 +184,9 @@ internal fun SettingsList(
                     Divider()
                     SRow(SettingsGlyph.Pin, Tints.location, "足迹", if (locOn) "记录全天位置" else "未开启") { onOpen(SettingsPage.Location) }
                 }
-                if (AppGraph.isScreenTimeReady) {
-                    val stOn = AppGraph.screenTimeSettings.enabled.collectAsStateWithLifecycle().value
-                    Divider()
-                    SRow(SettingsGlyph.Clock, Tints.screenTime, "屏幕时间", if (stOn) "记录每天用了哪些 App" else "未开启") { onOpen(SettingsPage.ScreenTime) }
-                }
+                val stOn = if (AppGraph.isScreenTimeReady) AppGraph.screenTimeSettings.enabled.collectAsStateWithLifecycle().value else false
+                Divider()
+                SRow(SettingsGlyph.Clock, Tints.screenTime, "屏幕时间", if (stOn) "记录每天用了哪些 App" else "未开启") { onOpen(SettingsPage.ScreenTime) }
             }
         }
         // ---------- 整理 ----------

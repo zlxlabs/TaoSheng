@@ -151,7 +151,10 @@ internal class SubscriptionRuntime(
                 val reminderOnly = reminderDue && listOf("scheduleAt", "fullAt", "changeAt", "summaryAt", "batchAt").none { due.optLong(it).let { at -> at > 0 && at <= started } }
                 if (reminders.isNotEmpty()) {
                     sendReminders(channel, values, reminders, state, started)
-                    change(id) { j ->
+                    val sentDaily = state.templates.optString(MemoryFolder.dailyPath(today))
+                    val reachedDocument = channel.kind !in setOf(PushKind.MarkdownFolder, PushKind.Notion) ||
+                        reminders.all { it.text in sentDaily }
+                    if (reachedDocument) change(id) { j ->
                         val sent = j.optJSONObject("reminded") ?: JSONObject()
                         reminders.flatMap { it.keys }.forEach { sent.put(it, started) }
                         // 保留已发身份；切换状态或开关后也不能重发同一时间版本。
@@ -237,8 +240,10 @@ internal class SubscriptionRuntime(
         val date = day(at, zone()); val path = MemoryFolder.dailyPath(date)
         val files = state.templates.keys().asSequence().associateWith { state.templates.getString(it) }.toMutableMap()
         val base = files[path] ?: MemoryFolder.card("每日记录", "$date", "提醒", "$date · 提醒", reminders.size, "")
-        files[path] = base.substringBefore("<!-- resound:reminders -->").trimEnd() + "\n\n<!-- resound:reminders -->\n## 提醒\n$body\n"
+        files[path] = base
         applyScreenTime(files, channel.subscription, date)
+        files[path] = files.getValue(path).substringBefore("<!-- resound:reminders -->").trimEnd() +
+            "\n\n<!-- resound:reminders -->\n## 提醒\n$body\n"
         if (channel.kind == PushKind.MarkdownFolder) {
             if ("README.md" !in files) files["README.md"] = MemoryFolder(date, zone()).generate(PushSnapshot(), channel.subscription).getValue("README.md")
             // 这里只改当天一份文件，其余模板原样保留。
@@ -303,24 +308,48 @@ internal class SubscriptionRuntime(
         return "更新 $count 天的文档"
     }
     private suspend fun applyScreenTime(files: MutableMap<String, String>, s: PushSubscription, today: LocalDate) {
-        val path = MemoryFolder.dailyPath(today)
-        val markdown = if (s.screenTime) screenTimeMarkdown(today) else null
-        val existing = files[path]
-        if (markdown == null) {
-            if (existing != null) files[path] = replaceScreenTimeSection(existing, null)
-            return
+        val todayPath = MemoryFolder.dailyPath(today)
+        val paths = files.keys.filter { it.startsWith("daily/") && SCREEN_TIME_MARKER in files.getValue(it) }.toMutableSet()
+        paths += todayPath
+        for (path in paths) {
+            val date = LocalDate.parse(path.substringAfterLast('/').take(10))
+            val markdown = if (s.screenTime) screenTimeMarkdown(date) else null
+            val existing = files[path]
+            if (markdown == null) {
+                if (existing != null) files[path] = replaceScreenTimeSection(existing, null)
+                continue
+            }
+            val base = existing ?: MemoryFolder.card("每日记录", "$date", "屏幕时间", "$date · 屏幕时间", 0, "")
+            files[path] = replaceScreenTimeSection(base, markdown)
         }
-        val base = existing ?: MemoryFolder.card("每日记录", "$today", "屏幕时间", "$today · 屏幕时间", 0, "")
-        files[path] = replaceScreenTimeSection(base, markdown)
     }
 }
 
 internal const val SCREEN_TIME_MARKER = "<!-- resound:screen-time -->"
+internal const val SCREEN_TIME_END = "<!-- /resound:screen-time -->"
 
 internal fun replaceScreenTimeSection(content: String, markdown: String?): String {
-    val stripped = content.substringBefore(SCREEN_TIME_MARKER).trimEnd()
+    val start = content.indexOf(SCREEN_TIME_MARKER)
+    val prefix: String
+    val suffix: String
+    if (start < 0) {
+        prefix = content.trimEnd()
+        suffix = ""
+    } else {
+        prefix = content.substring(0, start).trimEnd()
+        val after = start + SCREEN_TIME_MARKER.length
+        val end = content.indexOf(SCREEN_TIME_END, after)
+        suffix = when {
+            end >= 0 -> content.substring(end + SCREEN_TIME_END.length).trimStart()
+            else -> {
+                val rest = content.substring(after)
+                val next = rest.indexOf("<!-- resound:")
+                if (next >= 0) rest.substring(next).trimStart() else ""
+            }
+        }
+    }
     val body = markdown?.trimEnd()?.takeIf { it.isNotEmpty() }
-    return if (body == null) {
-        if (stripped.isEmpty()) stripped else stripped + "\n"
-    } else stripped + "\n\n$SCREEN_TIME_MARKER\n## 屏幕时间\n$body\n"
+    val core = if (body == null) prefix else prefix + "\n\n$SCREEN_TIME_MARKER\n## 屏幕时间\n$body\n$SCREEN_TIME_END"
+    val joined = if (suffix.isEmpty()) core else core.trimEnd() + "\n\n" + suffix.trimEnd()
+    return if (joined.isEmpty()) joined else joined + "\n"
 }
