@@ -130,6 +130,9 @@ object AppGraph {
     lateinit var playbackSkip: app.resound.capture.PlaybackSkipSettings
     val isPlaybackSkipReady: Boolean get() = ::playbackSkip.isInitialized
 
+    /** 播放状态（是否在放、是否可能外放）应用级单例；有订阅者才注册系统回调。 */
+    lateinit var playback: app.resound.capture.PlaybackMonitor
+
 
     lateinit var review: app.resound.review.ReviewRepository
     val isReviewReady: Boolean get() = ::review.isInitialized
