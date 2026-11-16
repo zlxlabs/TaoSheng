@@ -542,7 +542,17 @@ class AndroidPushChannels internal constructor(
                 return@withContext false
             }
             val (row, message, testing) = parsed
-            val attempt = attempt(row.getLong("channelId"), message, testing)
+            val outgoing = if (message.topic == PushTopic.ScreenTime) {
+                val rawDate = message.screenTime?.takeUnless { it.isNull("date") }?.optString("date").orEmpty()
+                val date = if (rawDate.isNotEmpty()) java.time.LocalDate.parse(rawDate)
+                    else java.time.Instant.ofEpochMilli(message.at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                screenTimeMessage(date) ?: run {
+                    FailureNotes.record("push/screen-time-stale-dropped", IllegalStateException("screen time pending dropped after recheck"))
+                    outbox.edit().remove(job).commit()
+                    return@withContext false
+                }
+            } else message
+            val attempt = attempt(row.getLong("channelId"), outgoing, testing)
             val again = attempt?.result?.isFailure == true && attemptCount < 2
             if (again) check(outbox.edit().putString(job, row.put("message", attempt!!.snapshot.json()).toString()).commit())
             if (!again) outbox.edit().remove(job).commit()

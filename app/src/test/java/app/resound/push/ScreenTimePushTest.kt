@@ -2,8 +2,16 @@ package app.resound.push
 
 import android.app.Application
 import android.content.Context
+import androidx.work.Configuration
+import androidx.work.ListenableWorker
+import androidx.work.WorkManager
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.testing.WorkManagerTestInitHelper
+import app.resound.AppGraph
 import app.resound.data.MemoryEventEntity
 import app.resound.data.MemoryItemEntity
+import app.resound.data.ReviewEntity
 import app.resound.diagnostics.FailureNotes
 import app.resound.screentime.CoverageGap
 import app.resound.screentime.DevicePlayback
@@ -249,6 +257,153 @@ class ScreenTimePushTest {
         }
     }
 
+    @Test fun retryDropsScreenTimeAfterSwitchOff() = runBlocking {
+        MockWebServer().apply { start() }.use { server ->
+            val prefs = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val outbox = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val repo = repo(server, prefs, outbox)
+            repo.saveWithSubscription(null, PushKind.Webhook, "屏幕时间", mapOf("url" to "https://example.com/hook"),
+                PushSubscription(summaries = false, screenTime = true, screenTimeAt = 22 * 60), PushFormat.Json, false).getOrThrow()
+            val after = t(22, 1)
+            repo.screenTimeMessage = { d -> buildScreenTimeMessage(d, after, zone, ScreenTimeReader { _, _ -> sampleResult() }) }
+            server.enqueue(MockResponse().setResponseCode(503))
+            repo.dispatchScreenTime(after, zone)
+            val first = server.takeRequest(2, TimeUnit.SECONDS)!!.body.readUtf8()
+            assertTrue(first.contains("哔哩哔哩"))
+            assertTrue(first.contains("271.两眼一抹黑，试试也不亏"))
+            val job = outbox.all.keys.single() as String
+            assertTrue(outbox.getString(job, "")!!.contains("哔哩哔哩"))
+            repo.screenTimeMessage = { null }
+            val before = FailureNotes.dump()
+            assertFalse(repo.retry(job, 0))
+            assertEquals(1, server.requestCount)
+            assertFalse(outbox.contains(job))
+            val added = FailureNotes.dump().removePrefix(before)
+            assertTrue(added.contains("push/screen-time-stale-dropped"))
+            assertFalse(added.contains("哔哩哔哩"))
+            assertFalse(added.contains("271.两眼一抹黑"))
+        }
+    }
+
+    @Test fun retrySendsRegeneratedScreenTime() = runBlocking {
+        MockWebServer().apply { start() }.use { server ->
+            val prefs = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val outbox = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val repo = repo(server, prefs, outbox)
+            repo.saveWithSubscription(null, PushKind.Webhook, "屏幕时间", mapOf("url" to "https://example.com/hook"),
+                PushSubscription(summaries = false, screenTime = true, screenTimeAt = 22 * 60), PushFormat.Json, false).getOrThrow()
+            val after = t(22, 1)
+            val staleTitle = "过期节目标题-不应发出"
+            repo.screenTimeMessage = {
+                buildScreenTimeMessage(date, after, zone, ScreenTimeReader { _, _ -> sampleResult() })!!
+                    .let { it.copy(screenTime = it.screenTime!!.put("staleTitle", staleTitle)) }
+            }
+            server.enqueue(MockResponse().setResponseCode(503))
+            repo.dispatchScreenTime(after, zone)
+            server.takeRequest(2, TimeUnit.SECONDS)
+            val job = outbox.all.keys.single() as String
+            repo.screenTimeMessage = { d -> buildScreenTimeMessage(d, after, zone, ScreenTimeReader { _, _ ->
+                sampleResult().copy(devicePlayback = emptyList())
+            }) }
+            server.enqueue(MockResponse().setResponseCode(200))
+            assertFalse(repo.retry(job, 0))
+            val second = server.takeRequest(2, TimeUnit.SECONDS)!!.body.readUtf8()
+            assertFalse(second.contains(staleTitle))
+            assertFalse(second.contains("271.两眼一抹黑，试试也不亏"))
+            assertTrue(second.contains("哔哩哔哩"))
+            assertFalse(outbox.contains(job))
+        }
+    }
+
+    @Test fun historicalDocumentSyncDropsStaleScreenTimeSection() = runBlocking {
+        val dav = Dav()
+        try {
+            val prefs = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val dir = temp.newFolder()
+            val yesterday = date.minusDays(1)
+            val path = MemoryFolder.dailyPath(yesterday)
+            val stale = "# $yesterday\n\n正文\n\n$SCREEN_TIME_MARKER\n## 屏幕时间\n哔哩哔哩 192 分\n小宇宙《271.两眼一抹黑，试试也不亏》\n$SCREEN_TIME_END\n"
+            File(dir, "1.json").writeText(JSONObject().put("templates", JSONObject().put(path, stale)).toString())
+            prefs.edit().putString("subscription-1", JSONObject().put("summaryAt", at).toString()).commit()
+            val sub = PushSubscription(summaries = true, reminders = false, records = emptySet(),
+                trigger = RecordTrigger.Manual, incremental = false, screenTime = true, fullCheckAt = null, backfillDays = null)
+            val ch = PushChannel(1, PushKind.MarkdownFolder, "资料", true, Subscriptions.topics(sub), PushFormat.Markdown, "", subscription = sub)
+            val folder = mapOf("url" to "https://dav.example.test/dav/", "account" to "test@example.test",
+                "password" to "fake-password", "folder" to "Resound-Memory")
+            val asked = mutableListOf<LocalDate>()
+            val runtime = SubscriptionRuntime(prefs, dir, { ch }, { ch to folder }, PushTransport(dav.client),
+                { _, _, _ -> }, { _, _, _ -> }, { at }, { zone })
+            runtime.screenTimeMarkdown = { d -> asked += d; null }
+            runtime.source = { _, _ -> PushSnapshot(reviews = listOf(
+                ReviewEntity(1, "daily", date.toString(), date.toString(), "摘要", "[]", at, "test"))) }
+            runtime.run(1, manual = false).getOrThrow()
+            val uploaded = dav.files.values.joinToString("\n")
+            assertTrue("应实际上传文档：$uploaded", dav.files.isNotEmpty())
+            assertFalse(uploaded.contains("哔哩哔哩"))
+            assertFalse(uploaded.contains("271.两眼一抹黑"))
+            assertFalse(uploaded.contains(SCREEN_TIME_MARKER))
+            assertTrue(yesterday in asked)
+        } finally { dav.close() }
+    }
+
+    @Test fun historicalReportQueryStopsAtNextMidnight() = runBlocking {
+        val yesterday = date.minusDays(1)
+        val captured = mutableListOf<Pair<Long, Long>>()
+        val reader = ScreenTimeReader { from, until ->
+            captured += from to until
+            ScreenTimeResult.DISABLED
+        }
+        assertNull(loadScreenTimeReport(yesterday, at, zone, reader))
+        val from = yesterday.atStartOfDay(zone).toInstant().toEpochMilli()
+        val until = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        assertEquals(listOf(from to until), captured)
+    }
+
+    @Test fun generateFailureWorkerReturnsRetry() = runBlocking {
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
+        try {
+            val prefs = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val repo = AndroidPushChannels(prefs, context.getSharedPreferences(UUID.randomUUID().toString(), 0),
+                object : PushSecrets {
+                    val map = HashMap<String, String>()
+                    override fun read(ref: String) = map.getValue(ref)
+                    override fun write(ref: String, value: String) { map[ref] = value }
+                    override fun remove(ref: String) { map.remove(ref) }
+                }, PushTransport(), {})
+            repo.saveWithSubscription(null, PushKind.Webhook, "屏幕时间", mapOf("url" to "https://example.com/hook"),
+                PushSubscription(summaries = false, screenTime = true, screenTimeAt = 0), PushFormat.Json, false).getOrThrow()
+            repo.screenTimeMessage = { error("synthetic generate failure") }
+            AppGraph.push = repo
+            val result = TestListenableWorkerBuilder<ScreenTimePushWork>(context).build().doWork()
+            assertTrue(result is ListenableWorker.Result.Retry)
+        } finally { WorkManagerTestInitHelper.closeWorkDatabase() }
+    }
+
+    @Test fun unavailableScreenTimeWorkerPlansTomorrow() = runBlocking {
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
+        try {
+            val prefs = context.getSharedPreferences(UUID.randomUUID().toString(), 0)
+            val repo = AndroidPushChannels(prefs, context.getSharedPreferences(UUID.randomUUID().toString(), 0),
+                object : PushSecrets {
+                    val map = HashMap<String, String>()
+                    override fun read(ref: String) = map.getValue(ref)
+                    override fun write(ref: String, value: String) { map[ref] = value }
+                    override fun remove(ref: String) { map.remove(ref) }
+                }, PushTransport(), {})
+            repo.saveWithSubscription(null, PushKind.Webhook, "屏幕时间", mapOf("url" to "https://example.com/hook"),
+                PushSubscription(summaries = false, screenTime = true, screenTimeAt = 0), PushFormat.Json, false).getOrThrow()
+            repo.screenTimeMessage = { null }
+            AppGraph.push = repo
+            val result = TestListenableWorkerBuilder<ScreenTimePushWork>(context).build().doWork()
+            assertTrue(result is ListenableWorker.Result.Success)
+            val infos = WorkManager.getInstance(context).getWorkInfosForUniqueWork("push-screen-time").get()
+            assertTrue(infos.isNotEmpty())
+            assertTrue(infos.any { it.state == androidx.work.WorkInfo.State.ENQUEUED || it.state == androidx.work.WorkInfo.State.BLOCKED })
+        } finally { WorkManagerTestInitHelper.closeWorkDatabase() }
+    }
+
     @Test fun oldSubscriptionJsonDefaultsScreenTimeOffAt2200() {
         val s = PushSubscription(screenTime = true, screenTimeAt = 21 * 60)
         assertEquals(s, Subscriptions.read(Subscriptions.json(s)))
@@ -270,7 +425,11 @@ class ScreenTimePushTest {
     private fun event() = MemoryEventEntity(1, t(10, 0), t(10, 1), "工作", "讨论", "摘要", "[\"要点\"]", "[\"我\"]",
         null, null, null, true, false, t(10, 0), "test")
 
-    private fun repo(server: MockWebServer): AndroidPushChannels {
+    private fun repo(
+        server: MockWebServer,
+        prefs: android.content.SharedPreferences = context.getSharedPreferences("push", Context.MODE_PRIVATE),
+        outbox: android.content.SharedPreferences = context.getSharedPreferences("push-retries", Context.MODE_PRIVATE),
+    ): AndroidPushChannels {
         val secrets = object : PushSecrets {
             val map = HashMap<String, String>()
             override fun read(ref: String) = map.getValue(ref)
@@ -280,8 +439,7 @@ class ScreenTimePushTest {
         val transport = PushTransport(OkHttpClient.Builder().addInterceptor { chain ->
             chain.proceed(chain.request().newBuilder().url(server.url("/hook")).build())
         }.build())
-        return AndroidPushChannels(context.getSharedPreferences("push", Context.MODE_PRIVATE),
-            context.getSharedPreferences("push-retries", Context.MODE_PRIVATE), secrets, transport, {})
+        return AndroidPushChannels(prefs, outbox, secrets, transport, {})
     }
 
     private class Dav {
