@@ -24,6 +24,9 @@ private class RecDao : ScreenTimeDao {
     override suspend fun upsertNames(names: List<ScreenAppNameRow>) = die()
     override suspend fun insertStateRow(row: ScreenPullStateRow) = die()
     override suspend fun updateCoveredUntil(source: String, value: Long) = die()
+    override suspend fun updateFloor(source: String, value: Long) = die()
+    override suspend fun deleteAllNames() = die()
+    override suspend fun deleteUnreferencedNames() = die()
     override suspend fun raiseFloor(source: String, value: Long) = die()
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap.copy(id = if (gap.id == 0L) nextGapId++ else gap.id) }
     override suspend fun deleteGaps(from: Long, until: Long) = Unit

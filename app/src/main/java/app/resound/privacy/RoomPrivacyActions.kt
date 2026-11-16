@@ -9,7 +9,9 @@ import app.resound.data.writeTransaction
 import app.resound.data.CaptureDatabase
 import app.resound.data.SegmentEntity
 import app.resound.data.TranscriptLineEntity
+import app.resound.screentime.GapCode
 import app.resound.screentime.SCREEN_SOURCE
+import app.resound.screentime.ScreenCoverageGapRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -160,7 +162,21 @@ class RoomPrivacyActions(
                     db.screenTime().deleteEvents(from, until)
                     db.screenTime().forgetPlayback(from, until)
                     db.screenTime().deleteGaps(from, until)
-                    db.screenTime().raiseFloor(SCREEN_SOURCE, until)
+                    val floorAt = if (until == Long.MAX_VALUE) now() else until
+                    val gapFrom = if (from == Long.MIN_VALUE) 0L else from
+                    if (gapFrom < floorAt) {
+                        db.screenTime().recordGap(
+                            ScreenCoverageGapRow(
+                                source = SCREEN_SOURCE,
+                                fromAt = gapFrom,
+                                untilAt = floorAt,
+                                code = GapCode.PRIVACY_DELETED,
+                            ),
+                        )
+                    }
+                    db.screenTime().raiseFloor(SCREEN_SOURCE, floorAt)
+                    if (from == Long.MIN_VALUE && until == Long.MAX_VALUE) db.screenTime().deleteAllNames()
+                    else db.screenTime().deleteUnreferencedNames()
                 }
                 ForgetResult(deletedSegments, lines, deletedEvents, items)
             }

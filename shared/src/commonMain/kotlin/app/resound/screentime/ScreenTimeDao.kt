@@ -44,7 +44,19 @@ interface ScreenTimeDao {
     }
 
     @Query("UPDATE screen_pull_state SET floor = MAX(floor, :value) WHERE source = :source")
-    suspend fun raiseFloor(source: String, value: Long)
+    suspend fun updateFloor(source: String, value: Long)
+
+    /** 隐私下限只升不降；尚无状态行时插入，避免首次拉取把已删事件写回。 */
+    @Transaction
+    suspend fun raiseFloor(source: String, value: Long) {
+        if (insertStateRow(ScreenPullStateRow(source, null, value)) == -1L) updateFloor(source, value)
+    }
+
+    @Query("DELETE FROM screen_app_names")
+    suspend fun deleteAllNames()
+
+    @Query("DELETE FROM screen_app_names WHERE pkg NOT IN (SELECT DISTINCT pkg FROM screen_events)")
+    suspend fun deleteUnreferencedNames()
 
     @Insert
     suspend fun recordGap(gap: ScreenCoverageGapRow)
@@ -59,13 +71,16 @@ interface ScreenTimeDao {
     @Query("SELECT MAX(at) FROM screen_events")
     suspend fun lastEventAt(): Long?
 
-    /** 一次拉取的事件、名称、缺口与覆盖指针在同一事务落库；失败整体回滚、不留副作用（缺口与指针同生同灭，不重复写）。 */
+    /** 一次拉取的事件、名称、缺口与覆盖指针在同一事务落库；失败整体回滚、不留副作用（缺口与指针同生同灭，不重复写）。
+     *  提交前按此刻的隐私下限过滤，避免在途拉取写回已删数据。 */
     @Transaction
     suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long,
                            gaps: List<ScreenCoverageGapRow>) {
-        if (events.isNotEmpty()) insertEvents(events)
-        if (names.isNotEmpty()) upsertNames(names)
-        for (gap in gaps) recordGap(gap)
+        val floor = state(SCREEN_SOURCE)?.floor ?: 0L
+        val kept = retainPullAfterFloor(events, names, gaps, floor)
+        if (kept.events.isNotEmpty()) insertEvents(kept.events)
+        if (kept.names.isNotEmpty()) upsertNames(kept.names)
+        for (gap in kept.gaps) recordGap(gap)
         if (insertStateRow(ScreenPullStateRow(SCREEN_SOURCE, coveredUntil, 0)) == -1L)
             updateCoveredUntil(SCREEN_SOURCE, coveredUntil)
     }
@@ -124,4 +139,33 @@ interface ScreenTimeDao {
         for (gap in open) closeGap(gap.id, at)
         return open.size
     }
+}
+
+/** 提交拉取时按隐私下限留下的事件、名称、缺口。 */
+internal data class FloorFilteredPull(
+    val events: List<ScreenEventRow>,
+    val names: List<ScreenAppNameRow>,
+    val gaps: List<ScreenCoverageGapRow>,
+)
+
+internal fun retainPullAfterFloor(
+    events: List<ScreenEventRow>,
+    names: List<ScreenAppNameRow>,
+    gaps: List<ScreenCoverageGapRow>,
+    floor: Long,
+): FloorFilteredPull {
+    if (floor <= 0L) return FloorFilteredPull(events, names, gaps)
+    val keptEvents = events.filter { it.at >= floor }
+    val keptPkgs = keptEvents.map { it.pkg }.toSet()
+    val keptNames = names.filter { it.pkg in keptPkgs }
+    val keptGaps = gaps.mapNotNull { gap ->
+        val from = maxOf(gap.fromAt, floor)
+        when {
+            gap.untilAt <= floor -> null
+            from >= gap.untilAt -> null
+            from == gap.fromAt -> gap
+            else -> gap.copy(fromAt = from)
+        }
+    }
+    return FloorFilteredPull(keptEvents, keptNames, keptGaps)
 }

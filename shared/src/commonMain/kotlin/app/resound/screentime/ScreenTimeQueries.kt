@@ -1,6 +1,6 @@
 package app.resound.screentime
 
-/** 六种缺口的修复文案已定死；落库行遇到未知代码直接抛错（fail fast）。 */
+/** 缺口的修复文案已定死；落库行遇到未知代码直接抛错（fail fast）。 */
 private fun fixFor(code: String): String = when (code) {
     GapCode.USAGE_ACCESS_MISSING -> "设置 → 使用情况访问 → 回响 开启"
     GapCode.NOTIFICATION_ACCESS_MISSING -> "设置 → 通知使用权 → 回响 开启"
@@ -8,6 +8,7 @@ private fun fixFor(code: String): String = when (code) {
     GapCode.COVERAGE_LAG -> "打开回响，等待下一次采集"
     GapCode.LISTENER_DISCONNECTED -> "设置 → 通知使用权 → 回响 重新开启"
     GapCode.DISABLED -> "屏幕时间关闭期间未采集"
+    GapCode.PRIVACY_DELETED -> "这段已按你的删除要求清除，无法恢复"
     else -> throw IllegalArgumentException("未知缺口代码: $code")
 }
 
@@ -27,6 +28,8 @@ class ScreenTimeQueries(
     private val excluded: Set<String>,
     private val now: () -> Long,
     private val playbackQueries: PlaybackQueries,
+    /** 当前是否允许读取播放标题；关时本实现不查播放表。不改 [ScreenTimeReader] 签名。 */
+    private val titlesAllowed: () -> Boolean = { true },
     private val config: ScreenTimeConfig = ScreenTimeConfig(),
 ) : ScreenTimeReader {
     override suspend fun sessions(from: Long, until: Long): ScreenTimeResult {
@@ -76,16 +79,21 @@ class ScreenTimeQueries(
         val events = dao.events(from - config.lookbackMillis, until).mapNotNull { row ->
             ScreenEventType.of(row.type)?.let { ScreenEvent(row.id, row.at, row.pkg, row.cls, it) }
         }
-        val sessions = ScreenTimeRules
-            .sessions(events, from, until, coveredUntil ?: from, excluded, config)
-            .map {
-                NamedAppSession(
-                    it.pkg,
-                    ScreenTimeText.clean(names[it.pkg] ?: it.pkg, config.titleMaxCodePoints),
-                    it.from, it.until,
-                )
-            }
-        val devicePlayback = playbackQueries.overlapping(from, until)
+        val blocked = buildList {
+            for (gap in gaps) if (gap.code in SESSION_BLOCKING_GAP_CODES) add(gap.from to gap.until)
+            addAll(settings.disabledWindows())
+        }
+        val sessions = ScreenTimeRules.exclude(
+            ScreenTimeRules.sessions(events, from, until, coveredUntil ?: from, excluded, config),
+            blocked,
+        ).map {
+            NamedAppSession(
+                it.pkg,
+                ScreenTimeText.clean(names[it.pkg] ?: it.pkg, config.titleMaxCodePoints),
+                it.from, it.until,
+            )
+        }
+        val devicePlayback = if (titlesAllowed()) playbackQueries.overlapping(from, until) else emptyList()
         return ScreenTimeResult(
             enabled = true, sessions = sessions, coverageUntil = coveredUntil, gaps = gaps,
             devicePlayback = devicePlayback,

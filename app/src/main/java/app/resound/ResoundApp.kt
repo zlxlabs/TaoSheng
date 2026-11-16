@@ -146,7 +146,9 @@ class ResoundApp : Application() {
             saveBoolean = { key, value -> screenPrefs.edit().putBoolean(key, value).commit() },
             readLong = { key, def -> screenPrefs.getLong(key, def) },
             saveLong = { key, value -> screenPrefs.edit().putLong(key, value).commit() },
-            now = AppGraph.platform.now::now)
+            now = AppGraph.platform.now::now,
+            readString = { key, def -> screenPrefs.getString(key, def) ?: def },
+            saveString = { key, value -> screenPrefs.edit().putString(key, value).commit() })
         AppGraph.screenTimeSettings = screenTimeSettings
         val screenTimeSource = app.resound.screentime.AndroidScreenEventSource(this)
         AppGraph.screenTimePuller = app.resound.screentime.ScreenTimePuller(screenTimeSettings,
@@ -162,7 +164,8 @@ class ResoundApp : Application() {
             AppGraph.screenTimePuller, screenTimeSettings, permitted = screenTimeSource::permitted,
             playbackPermitted = { androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName) },
             excluded = launcherPkgs, now = AppGraph.platform.now::now,
-            playbackQueries = AppGraph.playbackQueries!!)
+            playbackQueries = AppGraph.playbackQueries!!,
+            titlesAllowed = { playbackTitleSettings.enabled.value })
         scope.launch {
             screenTimeSettings.enabled.collect { on ->
                 app.resound.screentime.ScreenTimePullWorker.schedule(this@ResoundApp, on)
