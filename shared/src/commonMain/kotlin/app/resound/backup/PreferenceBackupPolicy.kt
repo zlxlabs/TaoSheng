@@ -5,6 +5,7 @@ import kotlinx.serialization.json.*
 /** 设置与运行状态的跨平台分类；同一文件混合存储时按键过滤，恢复旧包也执行同一规则。 */
 object PreferenceBackupPolicy {
     val settings = mapOf(
+        "marks" to "新打点前后范围（毫秒）",
         "transcribe" to "识别来源、模型、语言、热词、间隔及网络偏好；加密字段另走密钥导出",
         "local-asr" to "本地模型用户选项；排除本机 NPU 检查和下载状态",
         "capture" to "录音用户配置及扩展键；仅排除明确的心跳、暂停、故障和恢复标记",
@@ -16,7 +17,7 @@ object PreferenceBackupPolicy {
         "backup" to "本机/云端目的地、保留份数和自动备份设置；排除统计和错误",
         "ask-selection" to "用户选择的问答模型",
         "usage" to "用户填写的计费单价",
-        "inputs" to "用户选择的录音来源；系统设备授权仍需新手机重新确认",
+        "inputs" to "用户选择的录音来源、蓝牙播放让出及手机续录选项；系统设备授权仍需新手机重新确认",
         "voice-input" to "语音输入开关、排除应用和截屏识字选项",
         "llm-providers" to "模型服务商及当前选择",
         "llm-balance" to "余额阈值；排除余额缓存和已提醒标记",
@@ -32,13 +33,15 @@ object PreferenceBackupPolicy {
         "location" to "定位和地点解析开关",
         "quick_prefs" to "快捷暂停时长和课堂类型",
         "device-ui" to "用户确认过的关灯提示",
-        "screen-time" to "屏幕时间总开关及开/关时刻；排除上次拉取节流时间",
+        "playback-title" to "记录播放标题开关及开启时刻",
+        "screen-time" to "屏幕时间采集开关及开/关时刻；排除上次拉取节流时间",
     )
     val secretPrefs = setOf(
         "transcribe", "digest-secrets", "push-secrets", "backup-secrets",
         "transcribe-header-secrets", "location-secrets", "backup-encryption-secrets",
     )
     val excluded = mapOf(
+        "custom-asr-formats" to "自定义转写格式能力缓存，30 天重新探测，不备份",
         "onboarding" to "首次转写、向导计时、诊断计数及提示已读均是本机引导状态，沿用既有不备份约定",
         "ask-compatibility" to "服务端能力探测缓存和失败冷却",
         "ask-suggestions" to "问答推荐缓存",

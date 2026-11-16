@@ -4,13 +4,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * 媒体会话变化的落库实现。四个方法共用一把 Mutex；总开关关闭时全部直接返回、不写库。
+ * 媒体会话变化的落库实现。四个方法共用一把 Mutex；「记录播放标题」关闭时全部直接返回、不写库。
  * 断开缺口的 code 为 [GapCode.LISTENER_DISCONNECTED]（listener_disconnected）。
- * 落库失败 fail fast 上抛，由调用方记一行 `playback:` 前缀日志（不记标题）。
+ * 落库失败 fail fast 上抛，由平台采集入口接入 FailureNotes（只记固定位置与异常类型，不记标题和包名）。
  */
 class PlaybackRecorder(
     private val dao: ScreenTimeDao,
-    private val settings: ScreenTimeSettings,
+    private val settings: PlaybackTitleSettings,
     private val appNames: suspend (Set<String>) -> Map<String, String>,
 ) : PlaybackSink {
     private val gate = Mutex()

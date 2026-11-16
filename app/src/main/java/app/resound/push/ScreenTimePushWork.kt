@@ -7,6 +7,7 @@ import app.resound.screentime.ScreenTimeReader
 import app.resound.screentime.ScreenTimeReport
 import app.resound.screentime.ScreenTimeReports
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -22,8 +23,14 @@ import java.time.format.DateTimeFormatter
 class ScreenTimePushWork(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val channels = AppGraph.push as? AndroidPushChannels ?: return Result.retry()
-        ScreenTimePushScheduler.plan(applicationContext, channels.dispatchScreenTime())
-        return Result.success()
+        return try {
+            ScreenTimePushScheduler.plan(applicationContext, channels.dispatchScreenTime())
+            Result.success()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.retry()
+        }
     }
 }
 
@@ -93,7 +100,8 @@ internal suspend fun loadScreenTimeReport(
 ): app.resound.screentime.ScreenTimeReport? {
     if (reader == null) return null
     val from = date.atStartOfDay(zone).toInstant().toEpochMilli()
-    val until = now.coerceAtLeast(from)
+    val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val until = minOf(now, dayEnd).coerceAtLeast(from)
     // 推送时刻不晚于当天 0 点：当天还没有数据，不查询（reader 对空区间会直接抛参数异常）。
     if (until <= from) return null
     val result = reader.sessions(from, until)

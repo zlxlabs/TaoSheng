@@ -5,6 +5,10 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -158,6 +162,158 @@ internal fun BackgroundLimitCard(body: String, onSettings: () -> Unit, onHide: (
             }
         }
     }
+}
+
+/** 唤醒芯片不能和录音同时工作的品牌多见于这些厂商；只用来决定是否在首页提示一次 */
+internal fun wakeWordLikelyBlocked(brand: String = android.os.Build.MANUFACTURER): Boolean =
+    brand.lowercase() in setOf("xiaomi", "redmi", "poco", "meizu", "oppo", "oneplus", "realme", "vivo", "iqoo")
+
+internal const val WAKE_WORD_TIP = "部分手机（如小米、魅族）在涛声录音时，喊“小爱同学”等唤醒词会没反应：手机不支持同时听唤醒词和录音。可以改用长按电源键唤醒语音助手。"
+
+/** 录音时语音助手唤不醒：只对常见受影响品牌、在开始收音后提示一次，点“知道了”不再出现 */
+@Composable
+fun WakeWordNotice(listening: Boolean, topGap: Dp = 0.dp) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("home-notices", Context.MODE_PRIVATE) }
+    var seen by remember { mutableStateOf(prefs.getBoolean("wakeWordTipSeen", false)) }
+    if (seen || !listening || !wakeWordLikelyBlocked()) return
+    val c = Rs.colors
+    Spacer(Modifier.height(topGap))
+    RsCard(padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Text("🎙", style = RsType.headline)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("录音时语音助手可能唤不醒", style = RsType.body, color = c.text)
+                Spacer(Modifier.height(4.dp))
+                Text("这台手机不支持一边录音一边听唤醒词。想用小爱同学等语音助手时，改用长按电源键唤醒。",
+                    style = RsType.caption, color = c.textSecondary)
+                Spacer(Modifier.height(12.dp))
+                Pill("知道了", filled = false) {
+                    seen = true
+                    prefs.edit().putBoolean("wakeWordTipSeen", true).apply()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 更新后第一次打开：首页一张小卡“已更新到 X · 这次更新了什么”，点开看这一版说明；看过或关掉不再出现。
+ * 全新安装不提示（安装时间等于更新时间，且从没记过）。
+ */
+@Composable
+fun WhatsNewNotice(topGap: Dp = 0.dp) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("home-notices", Context.MODE_PRIVATE) }
+    val current = remember { app.resound.ui.settings.Changelog.currentVersion(context) }
+    val entries = remember { app.resound.ui.settings.Changelog.entries(context) }
+    var seen by remember {
+        val stored = prefs.getString("whatsNewSeen", null)
+        val fresh = stored == null && runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).let { it.firstInstallTime == it.lastUpdateTime }
+        }.getOrDefault(false)
+        // 全新安装：直接记成已看过，免得下次误判
+        if (fresh) prefs.edit().putString("whatsNewSeen", current).apply()
+        mutableStateOf(!app.resound.update.ChangelogRules.shouldShowWhatsNew(stored, current, fresh, entries))
+    }
+    var open by remember { mutableStateOf(false) }
+    val entry = app.resound.update.ChangelogRules.entry(entries, current)
+    if (seen || entry == null) return
+    fun done() { seen = true; prefs.edit().putString("whatsNewSeen", current).apply() }
+    if (open) app.resound.ui.settings.ChangelogSheet(entry) { open = false; done() }
+    val c = Rs.colors
+    Spacer(Modifier.height(topGap))
+    RsCard(padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Text("✨", style = RsType.headline)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("已更新到 ${app.resound.ui.settings.displayVersion(current)}", style = RsType.body, color = c.text)
+                if (entry.title.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(entry.title, style = RsType.caption, color = c.textSecondary)
+                }
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    Pill("看看更新了什么", filled = true) { open = true }
+                    Spacer(Modifier.width(8.dp))
+                    Pill("知道了", filled = false) { done() }
+                }
+            }
+        }
+    }
+}
+
+/** 远程通知（魔搭 / GitHub 下发、已验签）：标题、正文、可选图片（如二维码）和链接；最多同时两条 */
+@Composable
+fun RemoteNoticeCards(topGap: Dp = 0.dp) {
+    val context = LocalContext.current
+    val notices = remember { app.resound.notice.RemoteNotices.get(context) }
+    val file by notices.file.collectAsStateWithLifecycle()
+    val dismissed by notices.dismissed.collectAsStateWithLifecycle()
+    val versionCode = remember { runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0)) }.getOrDefault(0L) }
+    val shown = app.resound.notice.NoticeRules.visible(file, System.currentTimeMillis(), versionCode, android.os.Build.MANUFACTURER, dismissed)
+    shown.forEach { n ->
+        Spacer(Modifier.height(topGap))
+        RemoteNoticeCard(n, notices.image(n)) { notices.dismiss(n.id) }
+    }
+}
+
+@Composable
+private fun RemoteNoticeCard(n: app.resound.notice.Notice, image: java.io.File?, onDismiss: () -> Unit) {
+    val c = Rs.colors
+    val context = LocalContext.current
+    val bitmap = remember(image) { image?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.path)?.asImageBitmap() }.getOrNull() } }
+    RsCard(padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Text("📣", style = RsType.headline)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(n.title, style = RsType.body, color = c.text)
+                if (n.body.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(n.body, style = RsType.caption, color = c.textSecondary)
+                }
+            }
+        }
+        if (bitmap != null) {
+            Spacer(Modifier.height(14.dp))
+            // 二维码等图片：居中，最宽 220dp，白底圆角，夜间也看得清
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                androidx.compose.foundation.Image(bitmap, n.image?.caption ?: n.title,
+                    Modifier.widthIn(max = 220.dp).fillMaxWidth().aspectRatio(n.image?.ratio ?: (bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)))
+                        .clip(RoundedCornerShape(14.dp)).background(androidx.compose.ui.graphics.Color.White))
+            }
+            n.image?.caption?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = RsType.caption, color = c.textTertiary, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (image != null) Pill("保存到相册", filled = true) { saveToGallery(context, image, n.id) }
+            n.link?.let { l -> Pill(l.label, filled = image == null) {
+                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(l.url))) }
+            } }
+            if (n.dismissible) Pill("知道了", filled = false, onClick = onDismiss)
+        }
+    }
+}
+
+/** 存进相册“Pictures/涛声”，方便用微信扫一扫 → 相册识别二维码；Android 10 起不需要存储权限 */
+private fun saveToGallery(context: Context, image: java.io.File, id: String) {
+    val ok = runCatching {
+        val ext = image.extension.lowercase().let { if (it == "jpg") "jpeg" else it }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "涛声-$id.${image.extension}")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/$ext")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/涛声")
+        }
+        val uri = requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
+        context.contentResolver.openOutputStream(uri).use { out -> requireNotNull(out).write(image.readBytes()) }
+    }.onFailure { app.resound.diagnostics.FailureNotes.record("ui/today/HomeNotices.kt:saveToGallery", it) }.isSuccess
+    android.widget.Toast.makeText(context, if (ok) "已保存到相册，可用微信扫一扫 → 相册识别" else "没保存成功，请稍后再试", android.widget.Toast.LENGTH_SHORT).show()
 }
 
 /** 按系统类型给“保活”提示换说法；界面只说要做什么 */

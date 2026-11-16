@@ -45,5 +45,5 @@ interface ScreenEventSource {
  *  26 DEVICE_SHUTDOWN、27 DEVICE_STARTUP。 */
 val SCREEN_EVENT_TYPES = setOf(1, 2, 23, 15, 16, 17, 18, 26, 27)
 
-/** 本卡的覆盖来源名；第 3 步媒体播放另加 "playback"。 */
+/** 屏幕事件覆盖来源名；播放记录用 [PLAYBACK_SOURCE]。 */
 const val SCREEN_SOURCE = "screen"

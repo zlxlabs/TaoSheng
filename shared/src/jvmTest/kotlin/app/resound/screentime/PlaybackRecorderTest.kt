@@ -2,6 +2,7 @@ package app.resound.screentime
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,8 +24,18 @@ private class RecDao : ScreenTimeDao {
     override suspend fun upsertNames(names: List<ScreenAppNameRow>) = die()
     override suspend fun insertStateRow(row: ScreenPullStateRow) = die()
     override suspend fun updateCoveredUntil(source: String, value: Long) = die()
+    override suspend fun updateFloor(source: String, value: Long) = die()
+    override suspend fun deleteAllNames() = die()
+    override suspend fun deleteUnreferencedNames() = die()
     override suspend fun raiseFloor(source: String, value: Long) = die()
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap.copy(id = if (gap.id == 0L) nextGapId++ else gap.id) }
+    override suspend fun overlappingGaps(from: Long, until: Long) =
+        gaps.filter { it.fromAt < until && it.untilAt > from }.sortedBy { it.fromAt }
+    override suspend fun deleteGap(id: Long) { gaps.removeAll { it.id == id } }
+    override suspend fun deleteGaps(from: Long, until: Long) {
+        val next = remainingGapsAfterDelete(gaps.toList(), from, until)
+        gaps.clear(); gaps.addAll(next)
+    }
     override suspend fun deleteEvents(from: Long, until: Long) = die()
     override suspend fun lastEventAt() = die()
     override suspend fun openPlayback(sessionKey: String) = playbacks.firstOrNull { it.sessionKey == sessionKey && it.untilAt == null }
@@ -63,20 +74,12 @@ private class RecDao : ScreenTimeDao {
 private class RecEnv(var on: Boolean = true) {
     var clock = T
     var enabledAt = 0L
-    var disabledAt = 0L
     val dao = RecDao()
-    val settings = ScreenTimeSettings(
+    val settings = PlaybackTitleSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, v -> on = v; true },
-        readLong = { key, def -> when (key) {
-            ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt
-            ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt
-            else -> def
-        } },
+        readLong = { key, def -> if (key == PlaybackTitleSettings.ENABLED_AT_KEY) enabledAt else def },
         saveLong = { key, value ->
-            when (key) {
-                ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt = value
-                ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt = value
-            }
+            if (key == PlaybackTitleSettings.ENABLED_AT_KEY) enabledAt = value
             true
         },
         now = { clock },
@@ -145,7 +148,7 @@ class PlaybackRecorderTest {
         assertEquals(GapCode.LISTENER_DISCONNECTED, env.dao.gaps.single().code)
     }
 
-    /** 必测 6：总开关关闭时四个方法都不写库。 */
+    /** 「记录播放标题」关闭时四个方法都不写库。 */
     @Test fun disabledWritesNothing() = runBlocking {
         val env = RecEnv(on = false)
         env.recorder.changed("k", "pkg.a", "A", null, true, T)
@@ -172,5 +175,35 @@ class PlaybackRecorderTest {
         assertEquals(t4, env.dao.playbacks[1].fromAt)
         assertEquals(null, env.dao.playbacks[1].untilAt)
         assertTrue(env.dao.gaps.isEmpty())
+    }
+
+    /** 关闭期间的会话变化不落库；打开后再发 changed，立即记一行开始。 */
+    @Test fun enableThenChangedWritesStartRow() = runBlocking {
+        val env = RecEnv(on = false)
+        env.recorder.changed("k", "pkg.a", "A", null, true, T)
+        env.clock = T + 1_000
+        env.settings.setEnabled(true)
+        env.recorder.changed("k", "pkg.a", "A", null, true, T + 1_000)
+        assertEquals(1, env.dao.playbacks.size)
+        val row = env.dao.playbacks.single()
+        assertEquals(T + 1_000, row.fromAt)
+        assertEquals(null, row.untilAt)
+        assertEquals("A", row.title)
+    }
+
+    @Test fun screenTimeOffDoesNotBlockPlaybackTitleWrite() = runBlocking {
+        var screenOn = false
+        val screen = ScreenTimeSettings(
+            readBoolean = { _, _ -> screenOn },
+            persist = { bools, _, _ -> bools[ScreenTimeSettings.KEY]?.let { screenOn = it }; true },
+            readLong = { _, def -> def }, now = { T },
+        )
+        assertFalse(screen.enabled.value)
+        val env = RecEnv(on = true)
+        env.names["pkg.a"] = "甲"
+        env.recorder.changed("k", "pkg.a", "A", null, true, T)
+        assertEquals(1, env.dao.playbacks.size)
+        assertEquals("A", env.dao.playbacks.single().title)
+        assertFalse(screen.enabled.value)
     }
 }

@@ -48,6 +48,9 @@ fun createAskRepository(
     val screenTools = AskScreenToolsCore(
         { AppGraph.screenTimeReader },
         TimeZone.of(java.time.ZoneId.systemDefault().id),
+        includeAppPlayback = { AppGraph.isDigestSettingsReady && AppGraph.digestSettings.includeAppPlayback.value },
+        screenEnabled = { AppGraph.isScreenTimeReady && AppGraph.screenTimeSettings.enabled.value },
+        playbackTitlesEnabled = { AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value },
     )
     val changes = AskChanges(database, onChanged = { EmbeddingScheduler.enqueue(context) })
     val suggestions = AskSuggestions(

@@ -18,11 +18,15 @@ import java.util.concurrent.TimeUnit
 class CustomAsrProvider(private val settings: AndroidTranscribeSettings, private val hotwords: () -> List<String> = { emptyList() }) : AsrProvider {
     override suspend fun recognize(audio: AsrAudio, key: String, beforeAudio: suspend () -> Unit): AsrResult = withContext(Dispatchers.IO) {
         val endpoint = settings.customEndpoint
-        val urls = runCatching { transcriptionEndpoints(endpoint, settings.customEndpointMode) }.onFailure {
+        val model = settings.customModel
+        val mode = settings.customEndpointMode
+        val urls = runCatching { transcriptionEndpoints(endpoint, mode) }.onFailure {
             FailureNotes.record("transcribe/ConfiguredAsrProvider.kt:19", it)
         }.getOrElse { throw AsrException(AsrError.Protocol) }
-        val http = defaultAndroidHttp.newBuilder().connectTimeout(10,TimeUnit.SECONDS).readTimeout(8,TimeUnit.MINUTES)
-            .callTimeout(8,TimeUnit.MINUTES).followRedirects(false).followSslRedirects(false).build()
+        // 议题 #46：慢速链路（如约 7 KB/s 的中继）上传一段录音要几十秒，中途偶尔卡住；
+        // 上传不能沿用默认的 10 秒写入限制，总时限也要容得下“上传 + 服务端转写”。固定值，避免每次新建一套网络客户端。
+        val http = defaultAndroidHttp.newBuilder().connectTimeout(30,TimeUnit.SECONDS).writeTimeout(2,TimeUnit.MINUTES)
+            .readTimeout(8,TimeUnit.MINUTES).callTimeout(15,TimeUnit.MINUTES).followRedirects(false).followSslRedirects(false).build()
         val network = androidNetwork(http)
         try {
             val upload = AudioUpload(audio.file.name, audio.format, audio.file.length()) { consume ->
@@ -36,7 +40,7 @@ class CustomAsrProvider(private val settings: AndroidTranscribeSettings, private
                 }
             }
             val prompt = if(settings.customEndpointMode == CustomEndpointMode.Auto || settings.customPrompt.value) Hotwords.customPrompt(hotwords()) else null
-            customRecognize(network,urls,key,settings.headers(TranscribeSource.Custom.name),upload,audio.durationMillis,settings.customModel,prompt,java.util.UUID.randomUUID().toString(),beforeAudio)
+            customRecognize(network,urls,key,settings.headers(TranscribeSource.Custom.name),upload,audio.durationMillis,model,prompt,java.util.UUID.randomUUID().toString(),beforeAudio, audio.separateSpeakers, settings.customFormats(endpoint, model, mode))
         } catch(e:kotlinx.coroutines.CancellationException){throw e}
         catch(e:AsrException){throw e}
         catch(e:java.io.IOException){throw AsrException(AsrError.Network,detail=modelServiceError(endpoint,e,AsrError.Network.human))}

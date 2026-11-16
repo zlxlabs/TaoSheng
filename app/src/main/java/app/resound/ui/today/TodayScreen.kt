@@ -257,6 +257,10 @@ fun TodayScreen(
                     app.resound.ui.settings.CrashNotice(topGap = 20.dp)
                     UpdatePrompt(topGap = 16.dp)
                     BackgroundLimitNotice(topGap = 12.dp)
+                    val captureStatus by capture.status.collectAsStateWithLifecycle()
+                    WakeWordNotice(captureStatus.state == CaptureState.Listening || captureStatus.state == CaptureState.Recording, topGap = 12.dp)
+                    WhatsNewNotice(topGap = 12.dp)
+                    RemoteNoticeCards(topGap = 12.dp)
                     // 首次使用：几步设置的清单，做完或关掉就不再出现；只在看今天时显示
                     StartChecklist(capture, hasKey, topGap = 20.dp)
                     app.resound.ui.onboarding.OnboardingTipCard(topGap = 12.dp)
@@ -289,8 +293,7 @@ fun TodayScreen(
                     rhythmScope.launch { listState.animateScrollToItem(timelineIndex()) }
                 })
         }
-        item(key = "screenTime") { ScreenTimeCard(date) }
-        if (importing) item(key = "import") { app.resound.ui.importer.ImportBanner() }
+        todayScreenTimeAndImport(date, importing)
         if (pendingCount > 0) {
             item {
                 Section("待确认", trailing = { Text("$pendingCount 条", style = RsType.caption, color = c.textTertiary) }) {
@@ -766,7 +769,7 @@ internal fun TimelineGroup(part: String, entries: List<TimelineEntry>, modifier:
                             retry = { app.resound.ui.topic.TopicUi.openTopic = e.topic.id }, retryLabel = "查看进度")
                     }
                     is TimelineEntry.Card -> CardHintLine(e.card) { onOpenCard(e.card) }
-                    is TimelineEntry.Import -> app.resound.ui.importer.ImportLine(e.record, e.events.size) { onOpenImport(e.record) }
+                    is TimelineEntry.Import -> app.resound.ui.importer.ImportLine(e.record, e.events) { onOpenImport(e.record) }
                 }
                 if (i != entries.lastIndex) Box(Modifier.padding(start = 76.dp, end = 18.dp).fillMaxWidth().height(0.5.dp).background(c.separator))
             }
@@ -832,7 +835,13 @@ internal fun TimelineLine(event: MemoryEvent, onLongPress: (() -> Unit)? = null,
         )
         Column(Modifier.weight(1f).alpha(dim)) {
             val counts = event.items.groupingBy { it.category }.eachCount()
+            // 卡 195：这件事和你打的点重叠就标一个📍（按时间重叠算，打点后马上出现）
+            val marked by remember(event.id, event.startAt, event.endAt) {
+                if (app.resound.AppGraph.isMarksReady) app.resound.AppGraph.marks.observeDay(event.startAt, event.endAt)
+                else kotlinx.coroutines.flow.flowOf(emptyList())
+            }.collectAsStateWithLifecycle(initialValue = emptyList())
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (marked.isNotEmpty()) { Text("📍", style = RsType.caption); Spacer(Modifier.width(4.dp)) }
                 Text(event.title, style = RsType.body.copy(fontWeight = FontWeight.SemiBold), color = c.text, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 // ★ 只给你亲手标的重点；大模型判断的“要紧”用浅色小字，只作参考
@@ -1232,6 +1241,14 @@ internal fun ItemSheet(opened: MemoryItem, memory: MemoryRepository, onOpenEvent
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ActionChip("接受", ChipTone.Accent, Modifier.weight(1f)) { memory.setItemStatus(item.id, ItemStatus.Accepted); onClose() }
                     ActionChip("忽略", ChipTone.Plain, Modifier.weight(1f)) { memory.setItemStatus(item.id, ItemStatus.Ignored); onClose() }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            // 加到手机日历：打开系统日历的新建日程，填好标题、时间、备注；没定日子的先选日子
+            if (task && item.status != ItemStatus.Ignored) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                ActionChip(if (item.dueAt != null) "📅 加到手机日历" else "📅 选日子后加到手机日历", ChipTone.AccentSoft, Modifier.fillMaxWidth()) {
+                    app.resound.ui.items.SystemCalendar.add(ctx, item)
                 }
                 Spacer(Modifier.height(10.dp))
             }

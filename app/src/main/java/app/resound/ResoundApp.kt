@@ -63,6 +63,9 @@ class ResoundApp : Application() {
             files = app.resound.platform.LocalFileStore(app.resound.platform.AndroidDispatchers),
             dispatchers = app.resound.platform.AndroidDispatchers,
         )
+        AppGraph.markSettings = app.resound.marks.AndroidMarkSettings(getSharedPreferences("marks", MODE_PRIVATE))
+        AppGraph.marks = app.resound.marks.MarkRepository(database, AppGraph.platform.now::now,
+            { AppGraph.markSettings.range.value }, { topicId, markId -> AppGraph.topics.unmark(topicId, markId) })
         val crashes = app.resound.diagnostics.CrashRecords(this)
         crashes.installHandler()
         appDisplayName = appName
@@ -93,6 +96,12 @@ class ResoundApp : Application() {
         AppGraph.prompts = app.resound.prompts.LocalPromptTemplates(this)
         AppGraph.inputs = inputs
         AppGraph.playbackSkip = AndroidPlaybackSkipSettings(this)
+        val transcribePrefs = getSharedPreferences("transcribe", MODE_PRIVATE)
+        AppGraph.playbackDigestSettings = app.resound.transcribe.PlaybackDigestSettings(
+            readBoolean = { key, def -> transcribePrefs.getBoolean(key, def) },
+            saveBoolean = { key, value -> transcribePrefs.edit().putBoolean(key, value).commit() },
+        )
+        AppGraph.playback = PlaybackMonitor(this, scope)
         CaptureNotifications.channels(this)
         controller = AndroidCaptureController(this, store)
         AppGraph.capture = controller
@@ -123,34 +132,47 @@ class ResoundApp : Application() {
         AppGraph.envSound = envSound
         AppGraph.location = app.resound.location.LocationRepository.create(this, database, scope)
         AppGraph.situation = app.resound.context.LocalSituationLookup.create(database, AppGraph.location, scope, AppGraph.platform.zone, AppGraph.platform.dispatchers.io)
-        // 屏幕时间采集底座；开关默认关，拉取器单例供周期任务与查询前拉取共用同一 Mutex。
+        val playbackPrefs = getSharedPreferences("playback-title", MODE_PRIVATE)
+        val playbackTitleSettings = app.resound.screentime.PlaybackTitleSettings(
+            readBoolean = { key, def -> playbackPrefs.getBoolean(key, def) },
+            saveBoolean = { key, value -> playbackPrefs.edit().putBoolean(key, value).commit() },
+            readLong = { key, def -> playbackPrefs.getLong(key, def) },
+            saveLong = { key, value -> playbackPrefs.edit().putLong(key, value).commit() },
+            now = AppGraph.platform.now::now)
+        AppGraph.playbackTitleSettings = playbackTitleSettings
+        AppGraph.playbackSink = app.resound.screentime.PlaybackRecorder(
+            database.screenTime(), playbackTitleSettings) { pkgs -> app.resound.screentime.appLabels(this, pkgs) }
+        AppGraph.playbackQueries = app.resound.screentime.PlaybackQueries(database.screenTime())
         val screenPrefs = getSharedPreferences("screen-time", MODE_PRIVATE)
         val screenTimeSettings = app.resound.screentime.ScreenTimeSettings(
             readBoolean = { key, def -> screenPrefs.getBoolean(key, def) },
-            saveBoolean = { key, value -> screenPrefs.edit().putBoolean(key, value).commit() },
+            persist = { bools, longs, strs ->
+                val editor = screenPrefs.edit()
+                bools.forEach { (key, value) -> editor.putBoolean(key, value) }
+                longs.forEach { (key, value) -> editor.putLong(key, value) }
+                strs.forEach { (key, value) -> editor.putString(key, value) }
+                editor.commit()
+            },
             readLong = { key, def -> screenPrefs.getLong(key, def) },
-            saveLong = { key, value -> screenPrefs.edit().putLong(key, value).commit() },
-            now = AppGraph.platform.now::now)
+            now = AppGraph.platform.now::now,
+            readString = { key, def -> screenPrefs.getString(key, def) ?: def })
         AppGraph.screenTimeSettings = screenTimeSettings
         val screenTimeSource = app.resound.screentime.AndroidScreenEventSource(this)
         AppGraph.screenTimePuller = app.resound.screentime.ScreenTimePuller(screenTimeSettings,
             screenTimeSource, database.screenTime(),
             now = AppGraph.platform.now::now, denied = { it is SecurityException },
             diagnostic = { android.util.Log.i("screentime", it) })
-        // 查询仓储；桌面与系统 UI 不算「在用」的 App。桌面只认 priority >= 0 的正规桌面——
-        // 系统设置的 FallbackHome 以 priority=-1000 兜底响应 HOME，按包名排除会连整个「设置」一起排掉。
         val launcherPkgs = packageManager.queryIntentActivities(
             android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME),
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
             .filter { it.priority >= 0 }
             .mapNotNull { it.activityInfo?.packageName }.toSet() + "com.android.systemui"
-        AppGraph.playbackSink = app.resound.screentime.PlaybackRecorder(
-            database.screenTime(), screenTimeSettings, screenTimeSource::appNames)
         AppGraph.screenTimeReader = app.resound.screentime.ScreenTimeQueries(database.screenTime(),
             AppGraph.screenTimePuller, screenTimeSettings, permitted = screenTimeSource::permitted,
             playbackPermitted = { androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName) },
-            excluded = launcherPkgs, now = AppGraph.platform.now::now)
-        // 开关变化时重排每小时拉取任务；变为开时立即补拉一次，不等整点。
+            excluded = launcherPkgs, now = AppGraph.platform.now::now,
+            playbackQueries = AppGraph.playbackQueries!!,
+            titlesAllowed = { playbackTitleSettings.enabled.value })
         scope.launch {
             screenTimeSettings.enabled.collect { on ->
                 app.resound.screentime.ScreenTimePullWorker.schedule(this@ResoundApp, on)
@@ -167,7 +189,11 @@ class ResoundApp : Application() {
             recentFiles = { from, until, block -> segmentFiles.withRecentDeletion(from, until, block) },
             voiceprintGuard = { block -> voiceprintRepository.withPrivacyDeletion(block) },
             removeFeatures = voiceprintRepository::removeFeatures,
-            scheduleCleanup = { app.resound.privacy.PrivacyCleanupWorker.enqueue(this) })
+            scheduleCleanup = { app.resound.privacy.PrivacyCleanupWorker.enqueue(this) },
+            archiveFiles = { from,until,block ->
+                check(::cardDevices.isInitialized) { "设备归档尚未就绪，请稍后重试" }
+                cardDevices.withArchivePrivacyDeletion(from,until,block)
+            })
         app.resound.privacy.PrivacyCleanupWorker.start(this)
         AppGraph.privacy = privacyActions
         AppGraph.segmentDeleter = privacyActions
@@ -186,7 +212,7 @@ class ResoundApp : Application() {
             }
         }
         transcribeRunner = TranscribeRunner(database.transcribe(), ConfiguredAsrProvider(this, settings, hotwords::merged),
-            settings::credential, transcripts::updateState, deferAudioCleanup = true,
+            settings::credential, transcripts::updateState,
             sourceReady = settings::ready, sourceKey = settings::credential, sourceNetwork = sourceNetwork, recordSpeed = asrChooser::record,
             recordTiming = { PipelineTimes.recordSegment(this, it) },
             defaultSource = { settings.source.value }, separateSpeakers = asrSpeed::effectiveSeparateSpeakers, topicTraining = database.topics()::trainingAt,
@@ -208,6 +234,7 @@ class ResoundApp : Application() {
                     (!settings.wifiOnly.value || network.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
                 }
             })
+        transcribeRunner.localResume = app.resound.transcribe.local.LocalResumeQueue(this)
         settings.testKey = { key ->
             val file = File.createTempFile("asr-test-", ".ogg", cacheDir)
             try {
@@ -226,7 +253,7 @@ class ResoundApp : Application() {
         val (things, thingExtraction) = app.resound.things.createThings(this, database, scope, digestSettings) { AppGraph.prompts.text("things") }
         AppGraph.things = things
         val skillScheduler = app.resound.skills.SkillScheduler(this)
-        digestRunner = DigestRunner(this, database.memory(), llm, digestSettings, { AppGraph.prompts.text("digest") }, situation = AppGraph.situation, thingExtraction = thingExtraction, networkAllowed = {
+        digestRunner = DigestRunner(this, database.memory(), llm, digestSettings, { AppGraph.prompts.text("digest") }, situation = AppGraph.situation, marks = database.marks()::overlapping, thingExtraction = thingExtraction, networkAllowed = {
             val connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
         }, unseparated = database.transcribe()::unseparated, playbackMillis = database.transcribe()::playbackMillis,
@@ -337,6 +364,7 @@ class ResoundApp : Application() {
         AppGraph.deviceScanError = cardDevices.lastError
         inputs.attachCards(cardDevices, AppGraph.deviceCards, scope)
         app.resound.devices.DeviceCardsWork.schedule(this)
+        app.resound.notice.NoticeWork.schedule(this)
         app.resound.update.UpdateWork.schedule(this, updater.autoCheck.value, updater.previewChannel.value)
         pipelineScheduler
         registerActivityLifecycleCallbacks(app.resound.update.UpdateForegroundChecks(updater, scope))

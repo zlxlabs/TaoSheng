@@ -18,6 +18,7 @@ import app.resound.data.HeartbeatEntity
 import app.resound.data.AppPowerEntity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
@@ -70,14 +71,15 @@ class CaptureService : Service() {
         threadCpuDiagnostics.record(this, charging.takeIf { epoch == chargeEpoch.get() }, state.name)
     }
     private var wakeLock: PowerManager.WakeLock? = null
-    private lateinit var playback: PlaybackMonitor
 
     override fun onCreate() {
         super.onCreate()
         alive = true
         instance = this
         folderImports()?.recordingChanged()
-        playback = PlaybackMonitor(this)
+        // 播放状态取 AppGraph 应用级单例；服务存活期间保持订阅，让回调与轮询保持活跃，
+        // 判定直接读 state.value；销毁时订阅随 scope.cancel 一起取消。
+        scope.launch { AppGraph.playback.state.collect { } }
         registerReceiver(powerReceiver, android.content.IntentFilter().apply {
             addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -239,12 +241,36 @@ class CaptureService : Service() {
         app.segmentFiles.awaitReady()
         app.cardDevices.recording(true)
         try {
-            InputSwitchLoop(app.inputs.snapshots, SystemClock::elapsedRealtime).run(onUnchanged = { route, note ->
-                if (app.inputs.status.value.using.key == route.device.key) app.inputs.report(route.device, note)
+            InputSwitchLoop(playbackYieldSnapshots(app.inputs.snapshots, BluetoothYieldSettings(this).changes,
+                AppGraph.playback.state.map { it.playing }), SystemClock::elapsedRealtime).run(onUnchanged = { route, note ->
+                if (app.inputs.status.value.using.key == route.device.key) {
+                    app.inputs.report(route.device, note)
+                    refreshNotification(false)
+                }
             }) { route, note ->
-                listenTo(route, note)
+                if (note?.startsWith(MicYield.PLAYBACK) == true) {
+                    store.event(WatchdogEventType.MicBusy, note)
+                    app.inputs.report(route.device, note)
+                    refreshNotification(false)
+                    if (route.pausedForPlayback) {
+                        controller.level(0f)
+                        transition(CaptureState.MicBusy, detail = note)
+                        try { awaitCancellation() } finally {
+                            finishPlaybackYield(route)
+                        }
+                    }
+                }
+                try { listenTo(route, note) } finally {
+                    if (note?.startsWith(MicYield.PLAYBACK) == true)
+                        finishPlaybackYield(route)
+                }
             }
         } finally { app.cardDevices.recording(false) }
+    }
+    private suspend fun finishPlaybackYield(route: InputRoute) = withContext(NonCancellable) {
+        store.event(WatchdogEventType.MicReleased, "播放让麦等待结束，重新选择录音输入")
+        app.inputs.report(route.device, null)
+        refreshNotification(false)
     }
     private suspend fun listenTo(route: InputRoute, note: String?) {
         var busy = false
@@ -300,6 +326,7 @@ class CaptureService : Service() {
                         if (!reported) {
                             val previous = app.inputs.status.value.using
                             app.inputs.report(route.device, note)
+                            refreshNotification(false)
                             if (previous.key != route.device.key || note != null)
                                 store.inputSwitched("${previous.name} → ${route.device.name}；${note ?: "录音输入切换"}")
                             reported = true
@@ -315,7 +342,7 @@ class CaptureService : Service() {
                             timeline?.frameArchiveId ?: source.id, sensitivity.minSpeechSamples),
                             sensitivity.minSpeechSamples).also { segmenter = it }
                         vad.accept(frame) { pcm, speech, level ->
-                            cutter.accept(pcm, speech, playback.speakerPlaying)
+                            cutter.accept(pcm, speech, AppGraph.playback.state.value.speakerPlaying)
                             val next = if (cutter.active) CaptureState.Recording else CaptureState.Listening
                             // 状态和采样在此线程串行；人声状态切换不改变 running 区间。
                             if (state != next) { state = next; controller.update(next) }
@@ -437,7 +464,6 @@ class CaptureService : Service() {
             val pending = commands.tryReceive().getOrNull() ?: break
             pending.completion?.completeExceptionally(CancellationException("录音服务已停止"))
         }
-        playback.close()
         stopLocation()
         unregisterReceiver(powerReceiver)
         if (!normalStop && controller.status.value.state != CaptureState.NoPermission) controller.update(CaptureState.Stopped)

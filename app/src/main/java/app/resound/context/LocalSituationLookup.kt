@@ -44,9 +44,20 @@ class LocalSituationLookup internal constructor(
                         if (!it.step() || it.isNull(0)) null else it.getLong(0) to it.getLong(1)
                     }
                 },
-                // 在用项数据源；reader 未装配或开关关闭时返回空，接口默认实现同样兜底。
-                appSessions = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty() },
-                devicePlayback = { from, until -> AppGraph.screenTimeReader?.sessions(from, until)?.devicePlayback.orEmpty() })
+                appSessions = { from, until ->
+                    if (!app.resound.digest.allowForegroundAppInPrompt(
+                            AppGraph.isScreenTimeReady && AppGraph.screenTimeSettings.enabled.value,
+                            AppGraph.isDigestSettingsReady && AppGraph.digestSettings.includeAppPlayback.value,
+                        )) emptyList()
+                    else AppGraph.screenTimeReader?.sessions(from, until)?.sessions.orEmpty()
+                },
+                devicePlayback = { from, until ->
+                    if (!app.resound.digest.allowAppPlaybackInPrompt(
+                            AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value,
+                            AppGraph.isDigestSettingsReady && AppGraph.digestSettings.includeAppPlayback.value,
+                        )) emptyList()
+                    else AppGraph.playbackQueries?.overlapping(from, until).orEmpty()
+                })
         }
 
     }

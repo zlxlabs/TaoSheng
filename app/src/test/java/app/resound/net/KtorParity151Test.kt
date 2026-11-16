@@ -115,7 +115,7 @@ class KtorParity151Test {
             s.enqueue(MockResponse().setBody("{}").setBodyDelay(1,TimeUnit.SECONDS))
             val h=OkHttpClient.Builder().callTimeout(200,TimeUnit.MILLISECONDS).build()
             error(runCatching { LlmClient(h).chatJson(preset(s),"","s","u") },LlmError.Network,
-                detail="等待超时：本地模型首次加载可能较慢，稍后再试")
+                detail=app.resound.net.WAIT_TIMEOUT_TEXT)
         }
     }
     private val stream = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"思考\",\"content\":\"你\"}}]}\r\n\r\n" +
@@ -207,7 +207,7 @@ class KtorParity151Test {
                 val boundary=r.getHeader("Content-Type")!!.substringAfter("boundary=")
                 val expected="--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\nContent-Length: 3\r\n\r\nasr\r\n" +
                     "--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"${audio.file.name}\"\r\nContent-Type: audio/ogg\r\nContent-Length: 3\r\n\r\n" +
-                    "\u0001\u0002\u0003\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"response_format\"\r\nContent-Length: 4\r\n\r\njson\r\n" +
+                    "\u0001\u0002\u0003\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"response_format\"\r\nContent-Length: 12\r\n\r\nverbose_json\r\n" +
                     "--BOUNDARY\r\nContent-Disposition: form-data; name=\"prompt\"\r\nContent-Length: 27\r\n\r\n可能出现的词：涛声\r\n--BOUNDARY--\r\n"
                 assertEquals(expected,r.body.clone().readUtf8().replace(boundary,"BOUNDARY"))
                 assertEquals(r.bodySize.toString(),r.getHeader("Content-Length"))

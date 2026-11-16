@@ -16,8 +16,8 @@ android {
         minSdk = 29
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 79
-        versionName = "0.4.0" + (providers.gradleProperty("previewNumber").orNull?.let {
+        versionCode = 81
+        versionName = "0.4.2" + (providers.gradleProperty("previewNumber").orNull?.let {
             require(it.matches(Regex("[1-9][0-9]*"))) { "previewNumber 必须为正整数" }
             "-preview.$it"
         } ?: "")
@@ -122,4 +122,20 @@ configurations.configureEach {
         "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0",
         "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
     )
+}
+
+// 更新日志：打包时把仓库根目录的 CHANGELOG.md 复制进安装包，App 里“版本更新 → 更新日志”和更新后的“这次更新了什么”都读它，只维护一份
+abstract class ChangelogAsset : DefaultTask() {
+    @get:InputFile abstract val source: RegularFileProperty
+    @get:OutputDirectory abstract val output: DirectoryProperty
+    @TaskAction fun copy() {
+        val dir = output.get().asFile.apply { deleteRecursively(); mkdirs() }
+        source.get().asFile.copyTo(File(dir, "CHANGELOG.md"), overwrite = true)
+    }
+}
+val changelogAsset = tasks.register<ChangelogAsset>("changelogAsset") {
+    source.set(rootProject.layout.projectDirectory.file("CHANGELOG.md"))
+}
+androidComponents {
+    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(changelogAsset, ChangelogAsset::output) }
 }

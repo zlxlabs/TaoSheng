@@ -1,9 +1,5 @@
 package app.resound.ui.screentime
 
-import android.content.ComponentName
-import android.content.Intent
-import android.os.Build
-import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,10 +22,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.resound.AppGraph
 import app.resound.R
 import app.resound.capture.MicHolderGuess
 import app.resound.diagnostics.FailureNotes
@@ -43,20 +39,25 @@ import app.resound.ui.verify.RsCard
 import app.resound.ui.verify.RsSheet
 import app.resound.ui.verify.springClick
 
-/** 设置 → 屏幕时间：总开关、使用情况访问与通知使用权授权引导。 */
+/** 采集开或「记录播放标题」开时，才显示整理隐私开关。 */
+internal fun showIncludeAppPlaybackSwitch(screenTimeOn: Boolean, playbackTitleOn: Boolean): Boolean =
+    screenTimeOn || playbackTitleOn
+
+/** 设置 → 屏幕时间：采集开关与使用情况访问权引导；底部是整理隐私开关。 */
 @Composable
 fun ScreenTimePage(settings: ScreenTimeSettings, bottom: Dp) {
     val c = Rs.colors
     val context = LocalContext.current
     val guess = remember { MicHolderGuess(context.applicationContext) }
     val enabled by settings.enabled.collectAsStateWithLifecycle()
-    var permitted by remember { mutableStateOf(guess.permitted()) }
-    var listenerOn by remember {
-        mutableStateOf(NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName))
+    val titleOn = if (AppGraph.isPlaybackTitleReady) {
+        AppGraph.playbackTitleSettings.enabled.collectAsStateWithLifecycle().value
+    } else {
+        false
     }
+    var permitted by remember { mutableStateOf(guess.permitted()) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         permitted = guess.permitted()
-        listenerOn = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
     }
     var saveError by remember { mutableStateOf(false) }
     var askUsage by remember { mutableStateOf(false) }
@@ -112,46 +113,9 @@ fun ScreenTimePage(settings: ScreenTimeSettings, bottom: Dp) {
                     }
                 }
             }
-            RsCard {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "设备播放记录（可选）：" + if (listenerOn) "已开启" else "未开启",
-                            style = RsType.headline,
-                            color = c.text,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (!listenerOn) {
-                            Text(
-                                "去开启",
-                                style = RsType.headline,
-                                color = c.accent,
-                                modifier = Modifier.springClick {
-                                    val intent = if (Build.VERSION.SDK_INT >= 30) {
-                                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
-                                            Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                                            ComponentName(
-                                                context.packageName,
-                                                "app.resound.screentime.PlaybackListenerService",
-                                            ).flattenToString(),
-                                        )
-                                    } else {
-                                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                    }
-                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    context.startActivity(intent)
-                                },
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "开启「通知使用权」后，" + stringResource(R.string.app_name) + "会记下手机在播放什么（App、节目标题、起止时间），用来判断录音里的外放声音来自哪里，也会出现在问问和每日屏幕时间里。这只表示手机在播放，不代表你在听；不会读取任何通知内容。",
-                        style = RsType.subhead,
-                        color = c.textSecondary,
-                    )
-                }
-            }
+        }
+        if (showIncludeAppPlaybackSwitch(enabled, titleOn) && AppGraph.isDigestSettingsReady) {
+            IncludeAppPlaybackCard()
         }
     }
     if (askUsage) {
@@ -161,6 +125,40 @@ fun ScreenTimePage(settings: ScreenTimeSettings, bottom: Dp) {
                 askUsage = false
             }
             ActionButton("稍后", ActionKind.Secondary) { askUsage = false }
+        }
+    }
+}
+
+@Composable
+private fun IncludeAppPlaybackCard() {
+    val c = Rs.colors
+    val includeApp by AppGraph.digestSettings.includeAppPlayback.collectAsStateWithLifecycle()
+    var appSaveError by remember { mutableStateOf(false) }
+    RsCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("整理时带上 App 与播放信息", style = RsType.headline, color = c.text)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "管整理和重新整理时的 App 名、节目名，以及问问里查 App 使用情况。关掉后这些都不发给大模型；仍会标「手机在外放」。",
+                    style = RsType.subhead,
+                    color = c.textSecondary,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Toggle(includeApp) { on ->
+                appSaveError = false
+                try {
+                    AppGraph.digestSettings.setIncludeAppPlayback(on)
+                } catch (e: IllegalStateException) {
+                    FailureNotes.record("ui/include-app-playback-save", e)
+                    appSaveError = true
+                }
+            }
+        }
+        if (appSaveError) {
+            Spacer(Modifier.height(8.dp))
+            Text("保存失败，请重试", style = RsType.subhead, color = c.warning)
         }
     }
 }
