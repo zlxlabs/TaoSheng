@@ -45,10 +45,11 @@ class LocalSituationLookup internal constructor(
                     }
                 },
                 devicePlayback = { from, until ->
-                    app.resound.digest.playbackRecordsForPrompt(
-                        titleEnabled = AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value,
-                        includeAppPlayback = AppGraph::digestSettings.isInitialized && AppGraph.digestSettings.includeAppPlayback.value,
-                    ) { AppGraph.playbackQueries?.overlapping(from, until).orEmpty() }
+                    if (!app.resound.digest.allowAppPlaybackInPrompt(
+                            AppGraph.isPlaybackTitleReady && AppGraph.playbackTitleSettings.enabled.value,
+                            AppGraph.isDigestSettingsReady && AppGraph.digestSettings.includeAppPlayback.value,
+                        )) emptyList()
+                    else AppGraph.playbackQueries?.overlapping(from, until).orEmpty()
                 })
         }
 

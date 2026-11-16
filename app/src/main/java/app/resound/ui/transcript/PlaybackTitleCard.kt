@@ -68,7 +68,7 @@ internal fun PlaybackTitleCard() {
     if (saveError) {
         Text("保存失败，请重试", style = RsType.caption, color = c.warning)
     }
-    if (titleOn && app.resound.AppGraph::digestSettings.isInitialized) {
+    if (titleOn && app.resound.AppGraph.isDigestSettingsReady) {
         val includeApp by app.resound.AppGraph.digestSettings.includeAppPlayback.collectAsStateWithLifecycle()
         var appSaveError by remember { mutableStateOf(false) }
         Spacer(Modifier.height(12.dp))

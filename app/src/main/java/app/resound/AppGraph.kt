@@ -172,6 +172,7 @@ object AppGraph {
 
     lateinit var memory: MemoryRepository
     lateinit var digestSettings: DigestSettings
+    val isDigestSettingsReady: Boolean get() = ::digestSettings.isInitialized
 
     lateinit var ask: app.resound.ask.AskRepository
     val isAskReady: Boolean get() = ::ask.isInitialized
