@@ -142,7 +142,7 @@ class RoomPrivacyActionsTest {
                 calls++; beforeAudio(); entered.complete(Unit); release.await()
                 return AsrResult(emptyList(), 1000, null)
             }
-        }, { "test" }, { _, _ -> }, deferAudioCleanup = true)
+        }, { "test" }, { _, _ -> })
         val work = async { runner.run() }
         entered.await()
         privacy.forgetSegment(1); privacy.forgetSegment(2)
@@ -153,8 +153,8 @@ class RoomPrivacyActionsTest {
         assertEquals(0, count("memory_events")); assertEquals(0, count("memory_items"))
     }
 
-    /** 按时间遗忘同时删屏幕事件、下限提到区间终点；随后的拉取起点不早于该终点。 */
-    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloorSoPullStartsAfterIt() = runBlocking {
+    /** 按时间遗忘同时删屏幕事件、下限提到区间终点。 */
+    @Test fun deleteRangeRemovesScreenEventsAndRaisesFloor() = runBlocking {
         db.screenTime().insertEvents(listOf(
             ScreenEventRow(at = now - 30_000, pkg = "a", cls = "", type = 1),
             ScreenEventRow(at = now - 90_000, pkg = "a", cls = "", type = 1)))
@@ -163,17 +163,6 @@ class RoomPrivacyActionsTest {
         assertEquals(1, count("screen_events"))
         assertEquals(now - 90_000, db.screenTime().events(0, now).single().at)
         assertEquals(now, db.screenTime().state(SCREEN_SOURCE)?.floor)
-        var sinceFrom = 0L
-        val puller = ScreenTimePuller(
-            ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now }),
-            object : ScreenEventSource {
-                override fun permitted() = true
-                override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }
-                override suspend fun appNames(pkgs: Set<String>) = emptyMap<String, String>()
-            }, db.screenTime(), now = { now }, denied = { it is SecurityException })
-        puller.pull()
-        assertTrue(sinceFrom >= now)
     }
 
     /** 必测 8：区间内的播放行删除，跨左边界的行截断到 from。 */
@@ -190,4 +179,50 @@ class RoomPrivacyActionsTest {
         assertEquals(from, left.untilAt)
         assertEquals(from, left.lastSeenAt)
     }
+    private suspend fun seedPlaybackPrivacy() {
+        event(10)
+        for ((id, at) in listOf(10L to 10_000L, 20L to 20_000L, 30L to 30_000L)) {
+            segment(id, at)
+            if (id != 20L) line(id, id, 10)
+            db.screenTime().insertEvents(listOf(ScreenEventRow(at = at + 100, pkg = "test", cls = "", type = 1)))
+            db.screenTime().insertPlayback(PlaybackRow(sessionKey = "$id", pkg = "test", name = "test",
+                title = "test", subtitle = null, fromAt = at, untilAt = at + 1000, lastSeenAt = at + 1000))
+            for (source in listOf(SCREEN_SOURCE, PLAYBACK_SOURCE))
+                db.screenTime().recordGap(ScreenCoverageGapRow(source = source, fromAt = at, untilAt = at + 1000, code = "test"))
+        }
+    }
+
+    private suspend fun assertPlaybackPrivacy(remaining: List<Long>) {
+        assertEquals(remaining, db.screenTime().playbacksOverlapping(0, now).map { it.fromAt })
+        assertEquals(remaining.map { it + 100 }, db.screenTime().events(0, now).map { it.at })
+        for (source in listOf(SCREEN_SOURCE, PLAYBACK_SOURCE))
+            assertEquals(remaining, db.screenTime().gaps(source, 0, now).map { it.fromAt })
+    }
+
+    @Test fun eventDeletionClearsOnlyItsSegmentsPlaybackAndGaps() = runBlocking {
+        seedPlaybackPrivacy()
+        privacy.forgetEvent(10)
+        assertPlaybackPrivacy(listOf(20_000L))
+    }
+
+    @Test fun segmentDeletionClearsPlaybackAndGaps() = runBlocking {
+        seedPlaybackPrivacy()
+        privacy.forgetSegment(20)
+        assertPlaybackPrivacy(listOf(10_000L, 30_000L))
+    }
+
+    @Test fun batchDeletionPreservesPlaybackBetweenSegments() = runBlocking {
+        seedPlaybackPrivacy()
+        privacy.deleteSegments(listOf(10, 30, 10))
+        assertPlaybackPrivacy(listOf(20_000L))
+    }
+
+    @Test fun rangeWithoutAudioClearsPlaybackAndBothGapSources() = runBlocking {
+        seedPlaybackPrivacy()
+        db.testSql.execSQL("DELETE FROM transcript_lines")
+        db.testSql.execSQL("DELETE FROM segments")
+        privacy.deleteRange(20_000, 21_000)
+        assertPlaybackPrivacy(listOf(10_000L, 30_000L))
+    }
+
 }

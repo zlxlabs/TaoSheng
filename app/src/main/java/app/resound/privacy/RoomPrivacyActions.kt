@@ -31,6 +31,7 @@ class RoomPrivacyActions(
     private val diagnostic: (String) -> Unit = { android.util.Log.w("Privacy", it); Unit },
     private val scheduleCleanup: () -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
+    private val archiveFiles: suspend (Long,Long,suspend (List<String>) -> ForgetResult) -> ForgetResult = { _,_,block -> block(emptyList()) },
 ) : PrivacyActions, SegmentDeleter {
     private val gate = Mutex()
     private val dao = db.privacy()
@@ -44,7 +45,7 @@ class RoomPrivacyActions(
             val until = now()
             val from = PrivacyRules.recentStart(minutes, until)
             discardRecording()
-            recentFiles(from, until) { erase(screenRange = from to until) { dao.recent(from, until) } }
+            archiveFiles(from,until) { extra -> recentFiles(from, until) { erase(screenRange = from to until, extraFiles = extra) { dao.recent(from, until) } } }
         } }
     }
 
@@ -52,9 +53,14 @@ class RoomPrivacyActions(
         PrivacyRules.validateRange(fromMillis, untilMillis)
         return withContext(Dispatchers.IO + NonCancellable) { gate.withLock {
             if (PrivacyRules.discardRecording(untilMillis, now())) discardRecording()
-            recentFiles(fromMillis, untilMillis) { erase(screenRange = fromMillis to untilMillis) { dao.recent(fromMillis, untilMillis) } }
+            archiveFiles(fromMillis,untilMillis) { extra -> recentFiles(fromMillis, untilMillis) {
+                erase(screenRange = fromMillis to untilMillis, extraFiles = extra) { dao.recent(fromMillis, untilMillis) }
+            } }
         } }
     }
+
+    /** Full local erasure uses the same durable privacy path, including archive-only recordings. */
+    suspend fun deleteAll(): ForgetResult = deleteRange(Long.MIN_VALUE,Long.MAX_VALUE)
 
     override suspend fun previewRange(fromMillis: Long, untilMillis: Long): ForgetPreview = withContext(Dispatchers.IO) {
         dao.recent(fromMillis, untilMillis).let { rows -> ForgetPreview(rows.size, rows.sumOf { (it.endAt - it.startAt).coerceAtLeast(0) }) }
@@ -103,7 +109,8 @@ class RoomPrivacyActions(
 
     private suspend fun erase(explicitEvent: Long? = null, keepEvents: Boolean = false,
                               screenRange: Pair<Long, Long>? = null,
-                              onStage: (EventDeletionPhase) -> Unit = {}, select: suspend () -> List<SegmentEntity>): ForgetResult {
+                              onStage: (EventDeletionPhase) -> Unit = {}, extraFiles: List<String> = emptyList(),
+                              select: suspend () -> List<SegmentEntity>): ForgetResult {
         onStage(EventDeletionPhase.WaitingForAudio)
         return voiceprintGuard {
             onStage(EventDeletionPhase.WaitingForDatabase)
@@ -111,6 +118,7 @@ class RoomPrivacyActions(
             val result = db.writeTransaction {
                 onStage(EventDeletionPhase.Records)
                 val segments = select()
+                for (path in extraFiles.distinct()) dao.queueCleanup(PrivacyFileCleanup(path))
                 val events = mutableSetOf<Long>()
                 explicitEvent?.let(events::add)
                 var lines = 0
@@ -145,16 +153,19 @@ class RoomPrivacyActions(
                     deletedEvents += dao.deleteEvent(id)
                 }
                 if (!keepEvents) db.memory().repairMergedItems()
-                // 按时间遗忘时屏幕时间原始事件一并删除，删除下限提到区间终点，防被拉取拉回。
-                screenRange?.let { (from, until) ->
+                // 按指定范围或逐段时间删除；不把不相邻录音之间的记录一起删除。
+                val ranges = screenRange?.let { listOf(it) }
+                    ?: segments.map { it.startAt to it.endAt }.distinct()
+                for ((from, until) in ranges) {
                     db.screenTime().deleteEvents(from, until)
                     db.screenTime().forgetPlayback(from, until)
+                    db.screenTime().deleteGaps(from, until)
                     db.screenTime().raiseFloor(SCREEN_SOURCE, until)
                 }
                 ForgetResult(deletedSegments, lines, deletedEvents, items)
             }
             onStage(EventDeletionPhase.Files)
-            if (files.isNotEmpty()) runCatching { scheduleCleanup() }.onFailure {
+            if (files.isNotEmpty() || extraFiles.isNotEmpty()) runCatching { scheduleCleanup() }.onFailure {
                 FailureNotes.record("privacy/RoomPrivacyActions.kt:147", it)
             }
             for ((segment, lines) in files) {

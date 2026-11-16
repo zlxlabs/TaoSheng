@@ -35,6 +35,6 @@ interface SituationLookup {
     /** [from, until) 内手机前台使用段；屏幕时间未装配或关闭时返回空。已脱敏的 [NamedAppSession.name]。 */
     suspend fun appSessions(from: Long, until: Long): List<NamedAppSession> = emptyList()
 
-    /** [from, until) 内设备播放记录；屏幕时间未装配、关闭或没有通知使用权时返回空。 */
+    /** [from, until) 内设备播放记录；未装配查询或没有记录时返回空。 */
     suspend fun devicePlayback(from: Long, until: Long): List<DevicePlayback> = emptyList()
 }

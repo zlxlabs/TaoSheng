@@ -30,12 +30,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.PersistableBundle
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -220,7 +225,7 @@ private fun ChannelSheet(repo: PushChannels, ch: PushChannel?, onDismiss: () -> 
             Field(values[f.key] ?: "", if (ch != null && f.secret) "已保存，留空表示不改" else f.hint, f.secret) { values[f.key] = it.trim() }
         }
         val allowed = remember(kind) { repo.topics(kind) }
-        SubscriptionEditor(sub, caps, format, isNew = ch == null) { sub = it }
+        SubscriptionEditor(sub, caps, isNew = ch == null) { sub = it }
         if (caps.formats.size > 1) {
             Label("格式")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -275,6 +280,7 @@ private fun ChannelSheet(repo: PushChannels, ch: PushChannel?, onDismiss: () -> 
                     scope.launch { result = repo.rebuild(ch.id); busy = false }
                 }
             }
+            if (ch.kind == PushKind.MarkdownFolder) AgentCopy(repo, ch.id)
             ActionButton(if (busy) "正在发送…" else "测试一下", ActionKind.Secondary, enabled = !busy) {
                 busy = true; result = null
                 scope.launch { result = repo.test(ch.id); busy = false }
@@ -284,6 +290,26 @@ private fun ChannelSheet(repo: PushChannels, ch: PushChannel?, onDismiss: () -> 
             }
         }
     }
+}
+
+/** 同步文件夹：复制一段话给 Claude Code、Codex 等智能体，让它只读这个文件夹。S3 不是 WebDAV，不显示。 */
+@Composable
+private fun AgentCopy(repo: PushChannels, id: Long) {
+    val c = Rs.colors
+    val context = LocalContext.current
+    val prompt by produceState<String?>(null, id) { value = repo.agentPrompt(id) }
+    var copied by remember { mutableStateOf(false) }
+    val text = prompt ?: return
+    ActionButton(if (copied) "已复制" else "复制给智能体", ActionKind.Secondary) {
+        val clip = ClipData.newPlainText("涛声记忆库", text).apply {
+            // 含应用密码：系统剪贴板预览里不显示内容
+            description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        }
+        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+        copied = true
+    }
+    Text("粘贴给 Claude Code、Codex 等能运行命令的智能体，它就能读你的记忆。这段话含应用密码；不想让它读了，到网盘设置里删掉这个应用密码就行。",
+        style = RsType.caption, color = c.textSecondary)
 }
 
 @Composable
@@ -396,11 +422,8 @@ private fun hm(m: Int) = "%d:%02d".format(m / 60, m % 60)
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun SubscriptionEditor(sub: PushSubscription, caps: PushCapabilities, format: PushFormat, isNew: Boolean, onChange: (PushSubscription) -> Unit) {
+private fun SubscriptionEditor(sub: PushSubscription, caps: PushCapabilities, isNew: Boolean, onChange: (PushSubscription) -> Unit) {
     val c = Rs.colors
-    val screenTimeOn = if (app.resound.AppGraph.isScreenTimeReady)
-        app.resound.AppGraph.screenTimeSettings.enabled.collectAsStateWithLifecycle().value
-    else false
     // 一键模板
     val templates = buildList {
         add("手机通知" to PushSubscription.PhoneNotice)
@@ -443,21 +466,6 @@ private fun SubscriptionEditor(sub: PushSubscription, caps: PushCapabilities, fo
                 listOf(12, 18, 20, 21, 22, 23).map { it * 60 }.forEach { m -> Choice(hm(m), sub.footprintAt == m) { onChange(sub.copy(footprintAt = m)) } }
             }
             Text("位置会推到这个通道，注意保管；点“现在推一次”可以马上推今天的足迹。", style = RsType.caption, color = c.warning)
-        }
-    }
-    Block("每日屏幕时间", "每天定时推当天用了哪些 App、各用多久；要先在“设置 → 屏幕时间”里打开") {
-        val canToggle = screenTimeOn || sub.screenTime
-        ToggleRow("推每日屏幕时间", if (format == PushFormat.Json) "总时长和用得最多的 App；自定义接口另附完整时间线" else "总时长和用得最多的 App（只有 JSON 格式会附带完整时间线）",
-            sub.screenTime, enabled = canToggle) { onChange(sub.copy(screenTime = it)) }
-        if (!canToggle) {
-            Text("屏幕时间未开启，先在“设置 → 屏幕时间”里打开。", style = RsType.caption, color = c.textTertiary)
-        }
-        if (sub.screenTime) {
-            SubLabel("每天几点推")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(12, 18, 20, 21, 22, 23).map { it * 60 }.forEach { m -> Choice(hm(m), sub.screenTimeAt == m) { onChange(sub.copy(screenTimeAt = m)) } }
-            }
-            Text("App 使用记录会推到这个通道，注意保管。", style = RsType.caption, color = c.warning)
         }
     }
     // 卡 072：推录音（原始 OGG），只有坚果云同步文件夹能收文件

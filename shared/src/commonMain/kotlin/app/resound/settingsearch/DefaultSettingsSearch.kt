@@ -33,6 +33,7 @@ internal object SettingsIndex {
         }
         page("Capture", "录音与后台", "收音 听声音 麦克风 录音设置") {
             item("后台保活", "battery", "耗电 电池 省电 被杀 中断 后台")
+            item("语音助手唤醒", "wake-word", "小爱同学 唤醒词 语音助手 喊不醒")
             item("录音权限", "permissions", "授权 麦克风权限 通知权限 录不了")
             item("免打扰时段", "quiet", "不录 静音 睡觉 午休 勿扰 停录时段")
             item("暂停时长", "pause-length", "暂停多久 半小时 一小时 两小时")
@@ -49,6 +50,7 @@ internal object SettingsIndex {
             item("热词识别", "hotwords", "热词 纠错 错字 人名 术语")
             item("原声保留", "audio-retention", "录音保留 音频删除 存多久 空间")
             item("区分说话人", "speakers", "多人分段 谁说的 分人 说话人")
+            item("记录播放标题", "playback-title", "播放标题 节目名 通知使用权 外放来源")
         }
         page("EnvSound", "环境音识别", "背景声音 声音分类 环境识别") {
             item("开启环境音识别", "env-enabled", "环境模型 环境开关 声音模型")
@@ -121,6 +123,7 @@ internal object SettingsIndex {
         page("Update", "版本更新", "升级 新版本 下载更新") {
             item("检查更新", "check-update", "最新版 检查版本 手动更新")
             item("自动检查更新", "auto-update", "自动升级 更新开关 后台检查")
+            item("更新日志", "changelog", "更新记录 版本历史 更新了什么 新功能")
             item("跳过这个版本", "skip-version", "暂不更新 忽略版本 不升级")
         }
         page("About", "关于涛声", "关于 版本信息 帮助") {

@@ -102,4 +102,17 @@ class PlaybackDigestHeldTest {
         assertEquals(0, db.transcribe().allowPlaybackDigest(2))
         assertEquals(0, db.transcribe().segment(2).playbackDigest)
     }
+
+    @Test fun transcribeAnywayWritesDigestIntentInSameUpdate() = runBlocking(Dispatchers.IO) {
+        insertSegment(1, "SkippedPlayback", at)
+        insertSegment(2, "SkippedPlayback", at + 1_000)
+        assertEquals(1, db.transcribe().transcribeAnyway(1, 1))
+        val only = db.transcribe().segment(1)
+        assertEquals("Pending", only.status)
+        assertEquals(1, only.playbackDigest)
+        assertEquals(1, db.transcribe().transcribeAnyway(2, 2))
+        val both = db.transcribe().segment(2)
+        assertEquals("Pending", both.status)
+        assertEquals(2, both.playbackDigest)
+    }
 }

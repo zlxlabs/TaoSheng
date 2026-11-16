@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import app.resound.ui.ScrollTopButton
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -227,7 +228,7 @@ fun TranscriptScreen(
             val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
             val id = seg.segmentId
             SegmentCard(seg, Modifier.animateItem().then(if (selection.active) Modifier.trackRow(selection, id) else Modifier),
-                realtime, onTranscribeAnyway = { repo.transcribeAnyway(id) },
+                realtime, onTranscribeAnyway = { digest -> repo.transcribeAnyway(id, digest) },
                 onAllowPlaybackDigest = { repo.allowPlaybackDigest(id) },
                 onRetry = { repo.retrySegment(id) }, onDelete = { repo.deleteFailed(id) },
                 selected = if (selection.active) id in selection.ids else null,
@@ -239,6 +240,8 @@ fun TranscriptScreen(
           }
         }
     }
+    // 原话很长时滑下去要上滑很久：右侧淡入“↑”，点一下回到顶部；多选时让给底部操作栏
+    if (!selection.active) ScrollTopButton(listState, bottomPadding)
     ReachHereChip(reach, selection, boxTop, reach != null && order.indexOf(reach) < order.indexOf(selection.anchor)) { selection.rangeTo(it, order) }
     // 底部两行：✕ · 已选 N 段 · 共几分钟 · 全选 / 播放 · 导出 · 复制原话 · 删除
     SegmentSelectBar(selection, order, chosen, bottomPadding, onTop = { bottomEdge = it },
@@ -490,19 +493,8 @@ private fun SettingsCard(settings: TranscribeSettings, onSaved: () -> Unit) {
             Toggle(wifiOnly) { settings.setWifiOnly(it) }
         }
 
-        if (app.resound.AppGraph.isPlaybackSkipReady) {
-            val skip by app.resound.AppGraph.playbackSkip.enabled.collectAsStateWithLifecycle()
-            if (!local) Divider()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("外放声音时不转写", style = RsType.body, color = c.text)
-                    Text(if (skip) "手机扬声器在放视频、音乐时录到的先不转写，原话里可单段“仍然转写”；戴耳机不受影响"
-                        else "外放时录到的也照常转写，视频里的声音可能混进原话", style = RsType.caption, color = c.textSecondary)
-                }
-                Toggle(skip) { app.resound.AppGraph.playbackSkip.setEnabled(it) }
-            }
-        }
-
+        PlaybackSkipCard(local)
+        PlaybackTitleCard()
         if (app.resound.AppGraph.isAsrSpeedReady) SpeakerOptions()
 
         if (ready) {
@@ -712,7 +704,7 @@ private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) = app.resound.ui.ve
 // ---------- 每段录音 ----------
 
 @Composable
-private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Boolean, onTranscribeAnyway: () -> Unit,
+private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Boolean, onTranscribeAnyway: (Int) -> Unit,
                         onAllowPlaybackDigest: () -> Unit,
                         onRetry: () -> Unit = {}, onDelete: () -> Unit = {},
                         /** 多选时是否选中；不在多选为 null */
@@ -747,10 +739,7 @@ private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Bo
                 TranscriptStatus.Pending -> Note(if (realtime) "马上转写" else "等下一轮转写")
                 TranscriptStatus.Empty -> Note("只有声音，没识别出说话内容")
                 TranscriptStatus.Failed -> Note(seg.error ?: "没转成功，可以在上面点重试", c.critical)
-                TranscriptStatus.SkippedPlayback -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Note("手机外放声音时录的，没有转写", modifier = Modifier.weight(1f))
-                    if (seg.audioAvailable) Pill("仍然转写", filled = false, onClick = onTranscribeAnyway)
-                }
+                TranscriptStatus.SkippedPlayback -> SkippedPlaybackActions(seg, onTranscribeAnyway)
                 // 修不好的：灰色说明 + 删除；不再挂红字提醒
                 TranscriptStatus.Abandoned -> FailedActions(seg.error ?: "录音损坏，无法转写", retry = null, onDelete = onDelete)
                 // 忽略的、或失败超过 3 天的：灰色说明 + 重试 / 删除
@@ -761,6 +750,21 @@ private fun SegmentCard(seg: SegmentTranscript, modifier: Modifier, realtime: Bo
     // 多选时整张卡盖一层：点 = 勾选，长按 = 选到这段（原话里的点按播放暂停）
     if (selected != null) Box(Modifier.matchParentSize().combinedClickable(
         interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onTap, onLongClick = onLongPress))
+    }
+}
+
+/** 卡 192：外放片段的原声按用户设的保留天数删除，删了就不能“仍然转写”，所以标出还剩几天 */
+@Composable
+internal fun skippedAudioHint(seg: SegmentTranscript): String {
+    if (!seg.audioAvailable) return "，原声已删除"
+    if (!app.resound.AppGraph.isOriginalAudioReady) return ""
+    val days by app.resound.AppGraph.originalAudio.retentionDays.collectAsStateWithLifecycle()
+    // 外放片段生成时就算“完成”，完成时间即录音结束时间
+    val left = app.resound.transcribe.originalAudioRemainingDays(seg.endAt, "SkippedPlayback", days, false, System.currentTimeMillis())
+    return when (left) {
+        null -> ""
+        0, 1 -> "，原声 1 天内删除"
+        else -> "，原声还留 $left 天"
     }
 }
 
