@@ -25,7 +25,12 @@ private class FakeDao : ScreenTimeDao {
     }
     override suspend fun insertStateRow(row: ScreenPullStateRow) = if (states.containsKey(row.source)) -1L else { states[row.source] = row; 1L }
     override suspend fun updateCoveredUntil(source: String, value: Long) { states[source]?.let { states[source] = it.copy(coveredUntil = maxOf(it.coveredUntil ?: 0L, value)) } }
-    override suspend fun raiseFloor(source: String, value: Long) { states[source]?.let { states[source] = it.copy(floor = maxOf(it.floor, value)) } }
+    override suspend fun updateFloor(source: String, value: Long) { states[source]?.let { states[source] = it.copy(floor = maxOf(it.floor, value)) } }
+    override suspend fun deleteAllNames() { names.clear() }
+    override suspend fun deleteUnreferencedNames() {
+        val used = rows.map { it.pkg }.toSet()
+        names.keys.removeAll { it !in used }
+    }
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap }
     override suspend fun deleteGaps(from: Long, until: Long) { gaps.removeAll { it.fromAt < until && it.untilAt > from } }
     override suspend fun deleteEvents(from: Long, until: Long) { rows.removeAll { it.at >= from && it.at < until } }
@@ -43,10 +48,11 @@ private class FakeDao : ScreenTimeDao {
     override suspend fun truncatePlaybackRight(from: Long, until: Long) {}
     override suspend fun commitPull(events: List<ScreenEventRow>, names: List<ScreenAppNameRow>, coveredUntil: Long,
                                     gaps: List<ScreenCoverageGapRow>) {
-        if (failNames && names.isNotEmpty()) throw IllegalStateException("names failed")
-        if (events.isNotEmpty()) insertEvents(events)
-        if (names.isNotEmpty()) upsertNames(names)
-        gaps.forEach { recordGap(it) }
+        val kept = retainPullAfterFloor(events, names, gaps, state(SCREEN_SOURCE)?.floor ?: 0L)
+        if (failNames && kept.names.isNotEmpty()) throw IllegalStateException("names failed")
+        if (kept.events.isNotEmpty()) insertEvents(kept.events)
+        if (kept.names.isNotEmpty()) upsertNames(kept.names)
+        kept.gaps.forEach { recordGap(it) }
         if (insertStateRow(ScreenPullStateRow(SCREEN_SOURCE, coveredUntil, 0)) == -1L) updateCoveredUntil(SCREEN_SOURCE, coveredUntil)
     }
 }
@@ -72,6 +78,7 @@ private class FakeSettings(var on: Boolean = true) {
     var lastPull = 0L
     var enabledAt = 0L
     var disabledAt = 0L
+    var disabledWindows = ""
     val settings = ScreenTimeSettings(
         readBoolean = { _, _ -> on }, saveBoolean = { _, value -> on = value; true },
         readLong = { key, _ -> when (key) {
@@ -84,7 +91,12 @@ private class FakeSettings(var on: Boolean = true) {
                 ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt = value
                 else -> lastPull = value
             }; true },
-        now = { clock })
+        now = { clock },
+        readString = { key, def -> if (key == ScreenTimeSettings.DISABLED_WINDOWS_KEY) disabledWindows else def },
+        saveString = { key, value ->
+            if (key == ScreenTimeSettings.DISABLED_WINDOWS_KEY) disabledWindows = value
+            true
+        })
     fun puller(source: ScreenEventSource, dao: ScreenTimeDao, denied: (Throwable) -> Boolean = { false }) =
         ScreenTimePuller(settings, source, dao, now = { clock }, denied = denied)
 }
@@ -319,6 +331,51 @@ class ScreenTimePullerTest {
             FailureNotes.resetForTest()
         }
     }
+
+    @Test fun twoDisableCyclesWithoutPullDoNotBackfillEarlierOffPeriod() = runBlocking {
+        val dao = FakeDao()
+        val env = FakeSettings(on = true)
+        val t0 = env.clock
+        dao.commitPull(emptyList(), emptyList(), t0, emptyList())
+        env.clock = t0 + 60_000
+        env.settings.setEnabled(false)
+        env.clock = t0 + 120_000
+        env.settings.setEnabled(true)
+        env.clock = t0 + 180_000
+        env.settings.setEnabled(false)
+        env.clock = t0 + 240_000
+        env.settings.setEnabled(true)
+        val duringFirstOff = t0 + 90_000
+        val duringSecondOff = t0 + 210_000
+        val after = t0 + 300_000
+        env.clock = after + 31_000
+        val source = FakeSource(events = listOf(
+            resumed(duringFirstOff, "disabled.private.app"),
+            resumed(duringSecondOff),
+            resumed(after),
+        ))
+        assertEquals(PullResult.Pulled(1), env.puller(source, dao).pull())
+        assertEquals(listOf(after), dao.rows.map { it.at })
+        assertTrue(source.calls.none { (from, until) -> duringFirstOff >= from && duringFirstOff < until })
+        assertEquals(2, dao.gaps.count { it.code == GapCode.DISABLED })
+    }
+
+    @Test fun commitDropsEventsBelowFloorRaisedDuringSince() = runBlocking {
+        val dao = FakeDao()
+        val env = FakeSettings()
+        val source = object : ScreenEventSource {
+            override fun permitted() = true
+            override suspend fun since(from: Long, until: Long): List<RawScreenEvent> {
+                dao.raiseFloor(SCREEN_SOURCE, 999_999_999_000L)
+                return listOf(resumed(999_999_950_000L, "private.app"))
+            }
+            override suspend fun appNames(pkgs: Set<String>) = mapOf("private.app" to "私")
+        }
+        assertEquals(PullResult.Pulled(0), env.puller(source, dao).pull())
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(dao.names.isEmpty())
+        assertEquals(999_999_999_000L, dao.state(SCREEN_SOURCE)?.floor)
+    }
 }
 
 class ScreenTimeSettingsTest {
@@ -342,6 +399,23 @@ class ScreenTimeSettingsTest {
         assertTrue(env.settings.enabled.value)
         assertEquals(0L, FakeSettings(on = false).enabledAt) // 从未打开为 0
         assertEquals(0L, FakeSettings(on = false).disabledAt) // 从未关闭为 0
+    }
+
+    @Test fun twoOffOnCyclesKeepBothDisabledWindows() {
+        val env = FakeSettings(on = true)
+        env.clock += 10
+        env.settings.setEnabled(false)
+        val firstOff = env.clock
+        env.clock += 10
+        env.settings.setEnabled(true)
+        val firstOn = env.clock
+        env.clock += 10
+        env.settings.setEnabled(false)
+        val secondOff = env.clock
+        env.clock += 10
+        env.settings.setEnabled(true)
+        val secondOn = env.clock
+        assertEquals(listOf(firstOff to firstOn, secondOff to secondOn), env.settings.disabledWindows())
     }
 
     @Test fun defaultIsOff() {

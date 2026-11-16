@@ -48,25 +48,34 @@ class ScreenTimePuller(
                 legacyDisabled -> maxOf(dao.lastEventAt() ?: 0L, covered, state.floor, horizon, settings.enabledAt)
                 else -> maxOf(dao.lastEventAt() ?: 0L, covered, state.floor, horizon)
             }
+            val disabled = disabledWindowsForPull(state, covered, settings)
             // 缺口随本次事务一起落库：事件源抛错时与覆盖指针一起回滚，下次拉取不会重复写。
+            val existingDisabled = if (state == null) emptyList() else
+                dao.gaps(SCREEN_SOURCE, start, at).filter { it.code == GapCode.DISABLED }
             val gaps = buildList {
                 state?.coveredUntil?.takeIf { it < horizon }?.let {
-                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = "pull_failed"))
+                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = GapCode.PULL_FAILED))
                 }
-                if (state != null && covered < settings.enabledAt && settings.disabledAt > 0) {
-                    // 有关闭时刻：缺口从「上次采集」与「关闭时刻」的较大者起算，关闭前仍开着的使用照常入库。
-                    val offFrom = maxOf(covered, settings.disabledAt)
-                    if (offFrom < settings.enabledAt)
-                        add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = offFrom, untilAt = settings.enabledAt, code = "disabled"))
-                } else if (legacyDisabled) {
-                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = covered, untilAt = settings.enabledAt, code = "disabled"))
+                for ((offFrom, offUntil) in disabled) {
+                    if (existingDisabled.any { it.fromAt == offFrom && it.untilAt == offUntil }) continue
+                    add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = offFrom, untilAt = offUntil, code = GapCode.DISABLED))
                 }
             }
-            val raw = source.since(start, at)
+            val allowed = allowedPullRanges(start, at, disabled).ifEmpty {
+                if (start < at && disabled.isNotEmpty()) emptyList() else listOf(start to at)
+            }
+            val raw = if (allowed.size <= 1) {
+                allowed.singleOrNull()?.let { source.since(it.first, it.second) } ?: emptyList()
+            } else {
+                allowed.flatMap { (from, until) ->
+                    source.since(from, until).filter { it.at >= from && it.at < until }
+                }
+            }
+            val floor = dao.state(SCREEN_SOURCE)?.floor ?: 0L
             val events = raw.filter { it.type in SCREEN_EVENT_TYPES }
                 .map { ScreenEventRow(at = it.at, pkg = it.pkg, cls = it.cls ?: "", type = it.type) }
-                // 关闭期间系统残留的使用事件不入库（缺口已留痕）。
-                .filter { row -> gaps.none { it.code == "disabled" && row.at in it.fromAt until it.untilAt } }
+                .filter { row -> disabled.none { row.at >= it.first && row.at < it.second } }
+                .filter { it.at >= floor }
             val names = if (events.isEmpty()) emptyList() else
                 source.appNames(events.map { it.pkg }.toSet()).map { (pkg, name) -> ScreenAppNameRow(pkg, name, at) }
             dao.commitPull(events, names, at, gaps)
@@ -93,4 +102,45 @@ class ScreenTimePuller(
         /** 系统使用情况保留期；更早的区间不可补回。 */
         const val HORIZON_MILLIS = 10 * 24 * 60 * 60 * 1000L
     }
+}
+
+internal fun disabledWindowsForPull(
+    state: ScreenPullStateRow?,
+    covered: Long,
+    settings: ScreenTimeSettings,
+): List<Pair<Long, Long>> {
+    val windows = settings.disabledWindows().toMutableList()
+    if (state != null && covered < settings.enabledAt && settings.disabledAt > 0) {
+        val offFrom = maxOf(covered, settings.disabledAt)
+        if (offFrom < settings.enabledAt) windows += offFrom to settings.enabledAt
+    } else if (state != null && covered < settings.enabledAt && settings.disabledAt == 0L) {
+        windows += covered to settings.enabledAt
+    }
+    return mergeIntervals(windows)
+}
+
+internal fun allowedPullRanges(start: Long, end: Long, blocked: List<Pair<Long, Long>>): List<Pair<Long, Long>> {
+    if (start >= end) return emptyList()
+    val cuts = mergeIntervals(blocked.map { maxOf(it.first, start) to minOf(it.second, end) }.filter { it.first < it.second })
+    val out = mutableListOf<Pair<Long, Long>>()
+    var cursor = start
+    for ((bFrom, bUntil) in cuts) {
+        if (cursor < bFrom) out += cursor to bFrom
+        if (bUntil > cursor) cursor = bUntil
+    }
+    if (cursor < end) out += cursor to end
+    return out
+}
+
+internal fun mergeIntervals(intervals: List<Pair<Long, Long>>): List<Pair<Long, Long>> {
+    if (intervals.isEmpty()) return emptyList()
+    val sorted = intervals.sortedBy { it.first }
+    val out = mutableListOf(sorted.first())
+    for (i in 1 until sorted.size) {
+        val last = out.last()
+        val cur = sorted[i]
+        if (cur.first <= last.second) out[out.lastIndex] = last.first to maxOf(last.second, cur.second)
+        else out += cur
+    }
+    return out
 }

@@ -50,15 +50,41 @@ class ScreenTimeRulesTest {
         assertEquals(listOf(AppSession("A", t, t + 600_000)), run(events))
     }
 
-    /** 测试 3：锁屏下被拉起，RESUMED 不开段，KEYGUARD_HIDDEN 才从该时刻起算。 */
-    @Test fun lockedResumeStartsOnlyAfterUnlock() {
+    /** 锁屏后出现 RESUMED 即视为已解锁，不再空等 KEYGUARD_HIDDEN。 */
+    @Test fun resumedWhileKeyguardShownStartsSession() {
         val events = listOf(
             ev(1, t, "", ScreenEventType.KEYGUARD_SHOWN),
-            ev(2, t + 64_000, "B", ScreenEventType.RESUMED), // 17:11:04 被拉起
-            ev(3, t + 106_000, "", ScreenEventType.KEYGUARD_HIDDEN), // 17:11:46 解锁
-            ev(4, t + 406_000, "", ScreenEventType.SCREEN_OFF), // 5 分钟后熄屏
+            ev(2, t + 64_000, "B", ScreenEventType.RESUMED),
+            ev(3, t + 106_000, "", ScreenEventType.KEYGUARD_HIDDEN),
+            ev(4, t + 406_000, "", ScreenEventType.SCREEN_OFF),
         )
-        assertEquals(listOf(AppSession("B", t + 106_000, t + 406_000)), run(events))
+        assertEquals(listOf(AppSession("B", t + 64_000, t + 406_000)), run(events))
+    }
+
+    /** 真机常见序列：熄屏、锁屏显示、亮屏、天气 RESUMED/PAUSED；没有锁屏解除也要得出天气这一段。 */
+    @Test fun lockThenScreenOnThenResumedCountsUsageWithoutKeyguardHidden() {
+        val events = listOf(
+            ev(1, t, "", ScreenEventType.SCREEN_OFF),
+            ev(2, t + 1_000, "", ScreenEventType.KEYGUARD_SHOWN),
+            ev(3, t + 2_000, "", ScreenEventType.SCREEN_ON),
+            ev(4, t + 3_000, "weather", ScreenEventType.RESUMED),
+            ev(5, t + 63_000, "weather", ScreenEventType.PAUSED),
+        )
+        assertEquals(listOf(AppSession("weather", t + 3_000, t + 63_000)), run(events))
+    }
+
+    /** 已删除区间把跨越它的使用段截断，缺口内不得再出现使用。 */
+    @Test fun excludeRemovesOverlapWithDeletedWindow() {
+        val sessions = listOf(AppSession("private.app", t, t + 180_000), AppSession("other.app", t + 180_000, t + 240_000))
+        assertEquals(
+            listOf(
+                AppSession("private.app", t, t + 60_000),
+                AppSession("private.app", t + 120_000, t + 180_000),
+                AppSession("other.app", t + 180_000, t + 240_000),
+            ),
+            ScreenTimeRules.exclude(sessions, listOf(t + 60_000 to t + 120_000)),
+        )
+        assertEquals(emptyList<AppSession>(), ScreenTimeRules.exclude(listOf(AppSession("private.app", t + 60_000, t + 120_000)), listOf(t + 60_000 to t + 120_000)))
     }
 
     /** 测试 4：关机无熄屏，A 在 SHUTDOWN 时刻收尾；重启后的桌面被过滤。 */
