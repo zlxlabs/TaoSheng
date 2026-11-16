@@ -1,5 +1,6 @@
 package app.resound.screentime
 
+import app.resound.diagnostics.FailureNotes
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -26,6 +27,7 @@ private class FakeDao : ScreenTimeDao {
     override suspend fun updateCoveredUntil(source: String, value: Long) { states[source]?.let { states[source] = it.copy(coveredUntil = maxOf(it.coveredUntil ?: 0L, value)) } }
     override suspend fun raiseFloor(source: String, value: Long) { states[source]?.let { states[source] = it.copy(floor = maxOf(it.floor, value)) } }
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap }
+    override suspend fun deleteGaps(from: Long, until: Long) { gaps.removeAll { it.fromAt < until && it.untilAt > from } }
     override suspend fun deleteEvents(from: Long, until: Long) { rows.removeAll { it.at >= from && it.at < until } }
     override suspend fun lastEventAt() = rows.maxOfOrNull { it.at }
     override suspend fun openPlayback(sessionKey: String): PlaybackRow? = null
@@ -291,6 +293,31 @@ class ScreenTimePullerTest {
         assertEquals(PullResult.Pulled(0), env.puller(FakeSource(), dao).pull())
         assertEquals(1, dao.gaps.size) // 成功后只写一条
         assertEquals("disabled", dao.gaps.single().code)
+    }
+
+    /** 拉取失败与无使用情况访问权必须进问题记录（不写标题、包名、异常原文），且不落缺口。 */
+    @Test fun pullFailureAndMissingUsageAccessAreVisibleInFailureNotes() = runBlocking {
+        FailureNotes.resetForTest()
+        try {
+            val dao = FakeDao()
+            val env = FakeSettings()
+            assertEquals(PullResult.NoPermission, env.puller(FakeSource(permitted = false), dao).pull())
+            assertTrue(FailureNotes.dump().contains("screentime/ScreenTimePuller:NoPermission"))
+            assertEquals(0, dao.gaps.size)
+            val broken = object : ScreenEventSource {
+                override fun permitted() = true
+                override suspend fun since(from: Long, until: Long): List<RawScreenEvent> =
+                    throw IllegalArgumentException("secret-pkg-title")
+                override suspend fun appNames(pkgs: Set<String>) = emptyMap<String, String>()
+            }
+            assertEquals("IllegalArgumentException", (env.puller(broken, dao).pull() as PullResult.Failed).type)
+            val notes = FailureNotes.dump()
+            assertTrue(notes.contains("screentime/ScreenTimePuller:Failed IllegalArgumentException"))
+            assertFalse(notes.contains("secret-pkg-title"))
+            assertEquals(0, dao.gaps.size)
+        } finally {
+            FailureNotes.resetForTest()
+        }
     }
 }
 

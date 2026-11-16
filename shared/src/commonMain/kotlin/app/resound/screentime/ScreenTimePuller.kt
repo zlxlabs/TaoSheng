@@ -1,5 +1,6 @@
 package app.resound.screentime
 
+import app.resound.diagnostics.FailureNotes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,7 +29,10 @@ class ScreenTimePuller(
     suspend fun pull(): PullResult = gate.withLock {
         // 开关关闭时不碰事件源的任何方法。
         if (!settings.enabled.value) return@withLock PullResult.Disabled
-        if (!source.permitted()) return@withLock PullResult.NoPermission
+        if (!source.permitted()) {
+            FailureNotes.note("screentime/ScreenTimePuller:NoPermission")
+            return@withLock PullResult.NoPermission
+        }
         val at = now()
         if (at - settings.lastPullAt < PULL_THROTTLE_MILLIS) return@withLock PullResult.Throttled
         try {
@@ -73,9 +77,11 @@ class ScreenTimePuller(
             throw e
         } catch (e: Exception) {
             if (denied(e)) {
+                FailureNotes.record("screentime/ScreenTimePuller:NoPermission", e)
                 diagnostic("screentime: pull denied by ${e::class.simpleName}")
                 return@withLock PullResult.NoPermission
             }
+            FailureNotes.record("screentime/ScreenTimePuller:Failed", e)
             diagnostic("screentime: pull failed by ${e::class.simpleName}")
             PullResult.Failed(e::class.simpleName ?: "Unknown")
         }
