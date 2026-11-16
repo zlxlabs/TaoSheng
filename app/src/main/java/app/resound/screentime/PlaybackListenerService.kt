@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -38,6 +39,7 @@ class PlaybackListenerService : NotificationListenerService() {
     private var sessionsListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
     private val registrations = LinkedHashMap<String, Pair<MediaController, MediaController.Callback>>()
     private var heartbeatJob: Job? = null
+    private var titleSwitchJob: Job? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -53,6 +55,7 @@ class PlaybackListenerService : NotificationListenerService() {
         sessions.forEach { addSession(it) }
         Log.i(TAG, "playback: connected sessions=" + sessions.size)
         startHeartbeat()
+        watchTitleSwitch()
     }
 
     override fun onListenerDisconnected() {
@@ -66,6 +69,8 @@ class PlaybackListenerService : NotificationListenerService() {
         registrations.clear()
         heartbeatJob?.cancel()
         heartbeatJob = null
+        titleSwitchJob?.cancel()
+        titleSwitchJob = null
         emit { it.disconnected(System.currentTimeMillis()) }
         Log.i(TAG, "playback: disconnected sessions=$n")
         super.onListenerDisconnected()
@@ -112,6 +117,26 @@ class PlaybackListenerService : NotificationListenerService() {
         controller.registerCallback(callback, mainHandler)
         registrations[key] = controller to callback
         emitChanged(controller, playing = isPlaying(controller.playbackState))
+    }
+
+    private fun watchTitleSwitch() {
+        titleSwitchJob?.cancel()
+        if (!AppGraph.isPlaybackTitleReady) return
+        val settings = AppGraph.playbackTitleSettings
+        titleSwitchJob = scope.launch {
+            var was = settings.enabled.value
+            settings.enabled.collect { on ->
+                val turnedOn = !was && on
+                was = on
+                if (!turnedOn) return@collect
+                withContext(Dispatchers.Main.immediate) {
+                    for ((_, pair) in registrations) {
+                        val controller = pair.first
+                        emitChanged(controller, playing = isPlaying(controller.playbackState))
+                    }
+                }
+            }
+        }
     }
 
     private fun startHeartbeat() {

@@ -502,7 +502,7 @@ private fun SettingsCard(settings: TranscribeSettings, onSaved: () -> Unit) {
                 Toggle(skip) { app.resound.AppGraph.playbackSkip.setEnabled(it) }
             }
         }
-
+        PlaybackTitleCard()
         if (app.resound.AppGraph.isAsrSpeedReady) SpeakerOptions()
 
         if (ready) {

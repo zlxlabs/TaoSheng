@@ -84,20 +84,16 @@ class PreferenceBackup190Test {
         assertEquals("fixture-passphrase", restored["backup-encryption-secrets" to "passphrase"])
     }
 
-    @Test fun screenTimeSwitchSurvivesBackupButLastPullDoesNot() {
-        prefs("screen-time").edit()
-            .putBoolean("screenTimeEnabled", true)
-            .putLong("screenTimeEnabledAt", 42)
-            .putLong("screenTimeDisabledAt", 7)
-            .putLong("screenTimeLastPullAt", 999)
+    @Test fun playbackTitleSwitchSurvivesBackupRoundTrip() {
+        prefs("playback-title").edit()
+            .putBoolean("playbackTitleEnabled", true)
+            .putLong("playbackTitleEnabledAt", 42)
             .commit()
         BackupSettings.capture(context, root)
-        prefs("screen-time").edit().clear().commit()
+        prefs("playback-title").edit().clear().commit()
         BackupSettings.apply(context, root)
-        assertTrue(prefs("screen-time").getBoolean("screenTimeEnabled", false))
-        assertEquals(42L, prefs("screen-time").getLong("screenTimeEnabledAt", 0))
-        assertEquals(7L, prefs("screen-time").getLong("screenTimeDisabledAt", 0))
-        assertFalse(prefs("screen-time").contains("screenTimeLastPullAt"))
+        assertTrue(prefs("playback-title").getBoolean("playbackTitleEnabled", false))
+        assertEquals(42L, prefs("playback-title").getLong("playbackTitleEnabledAt", 0))
     }
 
     @Test fun brokenStructuredSettingDoesNotLeakItsValueInDiagnostics() {

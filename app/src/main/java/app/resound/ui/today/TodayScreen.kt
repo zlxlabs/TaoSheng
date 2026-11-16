@@ -289,7 +289,6 @@ fun TodayScreen(
                     rhythmScope.launch { listState.animateScrollToItem(timelineIndex()) }
                 })
         }
-        item(key = "screenTime") { ScreenTimeCard(date) }
         if (importing) item(key = "import") { app.resound.ui.importer.ImportBanner() }
         if (pendingCount > 0) {
             item {

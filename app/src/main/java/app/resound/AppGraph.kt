@@ -80,12 +80,11 @@ object AppGraph {
     val isSituationReady: Boolean get() = ::situation.isInitialized
     val isLocationReady: Boolean get() = ::location.isInitialized
 
-    /** 屏幕时间采集底座（默认关；开关与拉取器查询前共用同一 Mutex） */
-    lateinit var screenTimeSettings: app.resound.screentime.ScreenTimeSettings
-    lateinit var screenTimePuller: app.resound.screentime.ScreenTimePuller
-    val isScreenTimeReady: Boolean get() = ::screenTimePuller.isInitialized
-    /** 屏幕时间读取入口；为 null 时消费方按总开关关闭处理（ScreenTimeResult.DISABLED）。 */
-    @Volatile var screenTimeReader: app.resound.screentime.ScreenTimeReader? = null
+    /** 「记录播放标题」开关（默认关）。 */
+    lateinit var playbackTitleSettings: app.resound.screentime.PlaybackTitleSettings
+    val isPlaybackTitleReady: Boolean get() = ::playbackTitleSettings.isInitialized
+    /** 只读播放记录；为 null 时整理外放标注不匹配标题。 */
+    @Volatile var playbackQueries: app.resound.screentime.PlaybackQueries? = null
     /** 设备播放记录接收方；为 null 时通知监听服务丢弃回调。 */
     @Volatile var playbackSink: app.resound.screentime.PlaybackSink? = null
 
