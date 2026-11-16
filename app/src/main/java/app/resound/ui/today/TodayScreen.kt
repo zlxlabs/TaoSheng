@@ -289,7 +289,7 @@ fun TodayScreen(
                     rhythmScope.launch { listState.animateScrollToItem(timelineIndex()) }
                 })
         }
-        if (importing) item(key = "import") { app.resound.ui.importer.ImportBanner() }
+        todayScreenTimeAndImport(date, importing)
         if (pendingCount > 0) {
             item {
                 Section("待确认", trailing = { Text("$pendingCount 条", style = RsType.caption, color = c.textTertiary) }) {

@@ -2,6 +2,7 @@ package app.resound.screentime
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -178,5 +179,20 @@ class PlaybackRecorderTest {
         assertEquals(T + 1_000, row.fromAt)
         assertEquals(null, row.untilAt)
         assertEquals("A", row.title)
+    }
+
+    @Test fun screenTimeOffDoesNotBlockPlaybackTitleWrite() = runBlocking {
+        var screenOn = false
+        val screen = ScreenTimeSettings(
+            readBoolean = { _, _ -> screenOn }, saveBoolean = { _, v -> screenOn = v; true },
+            readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { T },
+        )
+        assertFalse(screen.enabled.value)
+        val env = RecEnv(on = true)
+        env.names["pkg.a"] = "甲"
+        env.recorder.changed("k", "pkg.a", "A", null, true, T)
+        assertEquals(1, env.dao.playbacks.size)
+        assertEquals("A", env.dao.playbacks.single().title)
+        assertFalse(screen.enabled.value)
     }
 }
