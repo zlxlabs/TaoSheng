@@ -2,7 +2,7 @@ package app.resound.screentime
 
 /**
  * 屏幕时间的读取约定（Claude 定稿，签名不得自行修改）。
- * 本版播放记录只读走 [PlaybackQueries]；[ScreenTimeReader] 仍保留签名，本 PR 不装配实现。
+ * 播放记录只读走 [PlaybackQueries]；屏幕使用走 [ScreenTimeQueries]（实现 [ScreenTimeReader]）。
  * 区间一律左闭右开、纪元毫秒。
  */
 
