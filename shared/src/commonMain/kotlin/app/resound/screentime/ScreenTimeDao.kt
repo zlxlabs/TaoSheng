@@ -64,9 +64,20 @@ interface ScreenTimeDao {
     @Query("DELETE FROM screen_events WHERE at >= :from AND at < :until")
     suspend fun deleteEvents(from: Long, until: Long)
 
-    /** 删除与遗忘区间重叠的缺口。 */
-    @Query("DELETE FROM screen_coverage_gaps WHERE fromAt < :until AND untilAt > :from")
-    suspend fun deleteGaps(from: Long, until: Long)
+    @Query("SELECT * FROM screen_coverage_gaps WHERE fromAt < :until AND untilAt > :from ORDER BY fromAt, id")
+    suspend fun overlappingGaps(from: Long, until: Long): List<ScreenCoverageGapRow>
+
+    @Query("DELETE FROM screen_coverage_gaps WHERE id = :id")
+    suspend fun deleteGap(id: Long)
+
+    /** 只去掉与遗忘区间重叠的那部分：完全落在区间内的整行删除，部分重叠的裁短或拆开，区间外保留。 */
+    @Transaction
+    suspend fun deleteGaps(from: Long, until: Long) {
+        val overlapping = overlappingGaps(from, until)
+        val remaining = remainingGapsAfterDelete(overlapping, from, until)
+        for (gap in overlapping) deleteGap(gap.id)
+        for (piece in remaining) recordGap(piece.copy(id = 0))
+    }
 
     @Query("SELECT MAX(at) FROM screen_events")
     suspend fun lastEventAt(): Long?
@@ -168,4 +179,19 @@ internal fun retainPullAfterFloor(
         }
     }
     return FloorFilteredPull(keptEvents, keptNames, keptGaps)
+}
+
+/** 删除 [from, until) 后缺口还该留下的片段。完全落在区间内的去掉；只重叠一部分的裁短或拆成两端。 */
+internal fun remainingGapsAfterDelete(
+    gaps: List<ScreenCoverageGapRow>,
+    from: Long,
+    until: Long,
+): List<ScreenCoverageGapRow> = gaps.flatMap { gap ->
+    when {
+        gap.untilAt <= from || gap.fromAt >= until -> listOf(gap)
+        else -> buildList {
+            if (gap.fromAt < from) add(gap.copy(id = 0, untilAt = from))
+            if (gap.untilAt > until) add(gap.copy(id = 0, fromAt = until))
+        }
+    }
 }

@@ -146,12 +146,16 @@ class ResoundApp : Application() {
         val screenPrefs = getSharedPreferences("screen-time", MODE_PRIVATE)
         val screenTimeSettings = app.resound.screentime.ScreenTimeSettings(
             readBoolean = { key, def -> screenPrefs.getBoolean(key, def) },
-            saveBoolean = { key, value -> screenPrefs.edit().putBoolean(key, value).commit() },
+            persist = { bools, longs, strs ->
+                val editor = screenPrefs.edit()
+                bools.forEach { (key, value) -> editor.putBoolean(key, value) }
+                longs.forEach { (key, value) -> editor.putLong(key, value) }
+                strs.forEach { (key, value) -> editor.putString(key, value) }
+                editor.commit()
+            },
             readLong = { key, def -> screenPrefs.getLong(key, def) },
-            saveLong = { key, value -> screenPrefs.edit().putLong(key, value).commit() },
             now = AppGraph.platform.now::now,
-            readString = { key, def -> screenPrefs.getString(key, def) ?: def },
-            saveString = { key, value -> screenPrefs.edit().putString(key, value).commit() })
+            readString = { key, def -> screenPrefs.getString(key, def) ?: def })
         AppGraph.screenTimeSettings = screenTimeSettings
         val screenTimeSource = app.resound.screentime.AndroidScreenEventSource(this)
         AppGraph.screenTimePuller = app.resound.screentime.ScreenTimePuller(screenTimeSettings,

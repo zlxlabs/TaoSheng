@@ -91,8 +91,9 @@ class ScreenTimeMigrationTest {
                 override suspend fun since(from: Long, until: Long) = listOf(RawScreenEvent(clock - 1_000, "com.example.app", "com.example.MainActivity", 1))
                 override suspend fun appNames(pkgs: Set<String>) = mapOf("com.example.app" to "示例")
             }
-            val settings = ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, _ -> savedPull }, saveLong = { _, v -> savedPull = v; true }, now = { clock })
+            val settings = ScreenTimeSettings(readBoolean = { _, _ -> true },
+                persist = { _, longs, _ -> longs[ScreenTimeSettings.LAST_PULL_KEY]?.let { savedPull = it }; true },
+                readLong = { _, _ -> savedPull }, now = { clock })
             val puller = ScreenTimePuller(settings, source, db.screenTime(), now = { clock },
                 denied = { it is SecurityException }, diagnostic = {})
             AppGraph.screenTimePuller = puller

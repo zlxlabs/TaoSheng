@@ -163,7 +163,9 @@ class RoomPrivacyActions(
                     db.marks().deleteRange(from, until)
                     db.marks().deleteLegacyRange(from, until)
                 }
-                for ((from, until) in ranges) {
+                // 无录音事件没有段区间，屏幕清理与打点一样走明确事件区间；有多段时仍只清各段，不把段与段之间一并删掉。
+                val screenRanges = ranges.ifEmpty { listOfNotNull(explicitRange) }
+                for ((from, until) in screenRanges) {
                     db.screenTime().deleteEvents(from, until)
                     db.screenTime().forgetPlayback(from, until)
                     db.screenTime().deleteGaps(from, until)

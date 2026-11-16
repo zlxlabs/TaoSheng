@@ -50,8 +50,10 @@ class ScreenTimePuller(
             }
             val disabled = disabledWindowsForPull(state, covered, settings)
             // 缺口随本次事务一起落库：事件源抛错时与覆盖指针一起回滚，下次拉取不会重复写。
-            val existingDisabled = if (state == null) emptyList() else
-                dao.gaps(SCREEN_SOURCE, start, at).filter { it.code == GapCode.DISABLED }
+            val existingDisabled = if (state == null) emptyList() else {
+                val lookupFrom = minOf(start, disabled.minOfOrNull { it.first } ?: start)
+                dao.gaps(SCREEN_SOURCE, lookupFrom, at).filter { it.code == GapCode.DISABLED }
+            }
             val gaps = buildList {
                 state?.coveredUntil?.takeIf { it < horizon }?.let {
                     add(ScreenCoverageGapRow(source = SCREEN_SOURCE, fromAt = it, untilAt = horizon, code = GapCode.PULL_FAILED))

@@ -29,7 +29,13 @@ private class RecDao : ScreenTimeDao {
     override suspend fun deleteUnreferencedNames() = die()
     override suspend fun raiseFloor(source: String, value: Long) = die()
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap.copy(id = if (gap.id == 0L) nextGapId++ else gap.id) }
-    override suspend fun deleteGaps(from: Long, until: Long) = Unit
+    override suspend fun overlappingGaps(from: Long, until: Long) =
+        gaps.filter { it.fromAt < until && it.untilAt > from }.sortedBy { it.fromAt }
+    override suspend fun deleteGap(id: Long) { gaps.removeAll { it.id == id } }
+    override suspend fun deleteGaps(from: Long, until: Long) {
+        val next = remainingGapsAfterDelete(gaps.toList(), from, until)
+        gaps.clear(); gaps.addAll(next)
+    }
     override suspend fun deleteEvents(from: Long, until: Long) = die()
     override suspend fun lastEventAt() = die()
     override suspend fun openPlayback(sessionKey: String) = playbacks.firstOrNull { it.sessionKey == sessionKey && it.untilAt == null }
@@ -188,8 +194,9 @@ class PlaybackRecorderTest {
     @Test fun screenTimeOffDoesNotBlockPlaybackTitleWrite() = runBlocking {
         var screenOn = false
         val screen = ScreenTimeSettings(
-            readBoolean = { _, _ -> screenOn }, saveBoolean = { _, v -> screenOn = v; true },
-            readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { T },
+            readBoolean = { _, _ -> screenOn },
+            persist = { bools, _, _ -> bools[ScreenTimeSettings.KEY]?.let { screenOn = it }; true },
+            readLong = { _, def -> def }, now = { T },
         )
         assertFalse(screen.enabled.value)
         val env = RecEnv(on = true)

@@ -165,8 +165,8 @@ class RoomPrivacyActionsTest {
         assertEquals(now, db.screenTime().state(SCREEN_SOURCE)?.floor)
         var sinceFrom = 0L
         val puller = ScreenTimePuller(
-            ScreenTimeSettings(readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-                readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now }),
+            ScreenTimeSettings(readBoolean = { _, _ -> true }, persist = { _, _, _ -> true },
+                readLong = { _, def -> def }, now = { now }),
             object : ScreenEventSource {
                 override fun permitted() = true
                 override suspend fun since(from: Long, until: Long): List<RawScreenEvent> { sinceFrom = from; return emptyList() }
@@ -239,8 +239,9 @@ class RoomPrivacyActionsTest {
     private fun queriesAt(clock: Long): ScreenTimeQueries {
         var lastPull = clock
         val settings = ScreenTimeSettings(
-            readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-            readLong = { _, _ -> lastPull }, saveLong = { _, v -> lastPull = v; true },
+            readBoolean = { _, _ -> true },
+            persist = { _, longs, _ -> longs[ScreenTimeSettings.LAST_PULL_KEY]?.let { lastPull = it }; true },
+            readLong = { _, _ -> lastPull },
             now = { clock },
         )
         val source = object : ScreenEventSource {
@@ -289,8 +290,8 @@ class RoomPrivacyActionsTest {
             override suspend fun appNames(pkgs: Set<String>) = mapOf("private.app" to "私")
         }
         val settings = ScreenTimeSettings(
-            readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-            readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { now },
+            readBoolean = { _, _ -> true }, persist = { _, _, _ -> true },
+            readLong = { _, def -> def }, now = { now },
         )
         val result = ScreenTimePuller(settings, source, db.screenTime(), now = { now }, denied = { false }).pull()
         assertEquals(PullResult.Pulled(0), result)
@@ -317,8 +318,8 @@ class RoomPrivacyActionsTest {
         }
         val clock = now + 31_000
         val settings = ScreenTimeSettings(
-            readBoolean = { _, _ -> true }, saveBoolean = { _, _ -> true },
-            readLong = { _, def -> def }, saveLong = { _, _ -> true }, now = { clock },
+            readBoolean = { _, _ -> true }, persist = { _, _, _ -> true },
+            readLong = { _, def -> def }, now = { clock },
         )
         assertEquals(PullResult.Pulled(1), ScreenTimePuller(settings, source, db.screenTime(), now = { clock }, denied = { false }).pull())
         assertEquals(listOf(later), db.screenTime().events(0, clock + 1).map { it.at })
@@ -334,6 +335,55 @@ class RoomPrivacyActionsTest {
         db.screenTime().upsertNames(listOf(ScreenAppNameRow("gone", "已删", 1), ScreenAppNameRow("kept", "仍在", 1)))
         privacy.deleteRange(50, 200)
         assertEquals(listOf("kept"), db.screenTime().names().map { it.pkg })
+    }
+
+    /** 没有关联录音的事件删除后，明确区间内的屏幕使用段、事件行和播放行都要清掉。 */
+    @Test fun forgetEventWithoutAudioClearsScreenSessionsEventsAndPlayback() = runBlocking {
+        val from = 10_000_000L
+        val until = 10_120_000L
+        val id = db.memory().insertEvent(MemoryEventEntity(
+            startAt = from, endAt = until, scene = "其他", title = "测试", summary = "摘要",
+            pointsJson = "[]", peopleJson = "[]", place = null, emotion = null, intensity = null,
+            important = false, createdAt = now, model = "test",
+        ))
+        assertTrue(db.privacy().eventSegments(id).isEmpty())
+        db.screenTime().insertEvents(listOf(
+            ScreenEventRow(at = from + 1_000, pkg = "talk.app", cls = "Main", type = 1),
+            ScreenEventRow(at = from + 60_000, pkg = "talk.app", cls = "Main", type = 1),
+        ))
+        db.screenTime().upsertNames(listOf(ScreenAppNameRow("talk.app", "谈话", from)))
+        db.screenTime().insertPlayback(PlaybackRow(
+            sessionKey = "talk", pkg = "talk.app", name = "谈话", title = "节目",
+            subtitle = null, fromAt = from + 10_000, untilAt = from + 20_000, lastSeenAt = from + 20_000,
+        ))
+        db.screenTime().advanceCoveredUntil(SCREEN_SOURCE, until)
+        val actions = RoomPrivacyActions(db, now = { until })
+        assertEquals(1, actions.forgetEvent(id).events)
+        assertNull(db.memory().event(id))
+        val result = queriesAt(until + 31_000).sessions(from, until)
+        assertTrue(result.sessions.isEmpty())
+        assertTrue(db.screenTime().events(from, until).isEmpty())
+        assertTrue(db.screenTime().playbacksOverlapping(from, until).isEmpty())
+    }
+
+    /** 两次交错删除后，前一次区间里没被第二次覆盖的那截仍受缺口保护，不能被更早的前台事件重放回来。 */
+    @Test fun overlappingRangeDeletesKeepProtectionOnUncoveredPrefix() = runBlocking {
+        val ten = 1_000_000_000_000L
+        val tenThirty = ten + 1_800_000
+        val eleven = ten + 3_600_000
+        val twelve = ten + 7_200_000
+        val nineFifty = ten - 600_000
+        db.screenTime().insertEvents(listOf(
+            ScreenEventRow(at = nineFifty, pkg = "front.app", cls = "Main", type = 1),
+        ))
+        db.screenTime().advanceCoveredUntil(SCREEN_SOURCE, twelve)
+        val actions = RoomPrivacyActions(db, now = { twelve })
+        actions.deleteRange(ten, eleven)
+        actions.deleteRange(tenThirty, twelve)
+        val around = queriesAt(twelve).sessions(nineFifty, twelve)
+        assertTrue(around.sessions.none { it.from < eleven && it.until > ten })
+        assertTrue(around.sessions.none { it.from < twelve && it.until > tenThirty })
+        assertTrue(queriesAt(twelve).sessions(ten, twelve).sessions.isEmpty())
     }
 
 }

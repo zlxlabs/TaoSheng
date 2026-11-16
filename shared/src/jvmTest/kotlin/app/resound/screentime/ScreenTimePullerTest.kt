@@ -32,7 +32,13 @@ private class FakeDao : ScreenTimeDao {
         names.keys.removeAll { it !in used }
     }
     override suspend fun recordGap(gap: ScreenCoverageGapRow) { gaps += gap }
-    override suspend fun deleteGaps(from: Long, until: Long) { gaps.removeAll { it.fromAt < until && it.untilAt > from } }
+    override suspend fun overlappingGaps(from: Long, until: Long) =
+        gaps.filter { it.fromAt < until && it.untilAt > from }.sortedBy { it.fromAt }
+    override suspend fun deleteGap(id: Long) { gaps.removeAll { it.id == id } }
+    override suspend fun deleteGaps(from: Long, until: Long) {
+        val next = remainingGapsAfterDelete(gaps.toList(), from, until)
+        gaps.clear(); gaps.addAll(next)
+    }
     override suspend fun deleteEvents(from: Long, until: Long) { rows.removeAll { it.at >= from && it.at < until } }
     override suspend fun lastEventAt() = rows.maxOfOrNull { it.at }
     override suspend fun openPlayback(sessionKey: String): PlaybackRow? = null
@@ -80,23 +86,21 @@ private class FakeSettings(var on: Boolean = true) {
     var disabledAt = 0L
     var disabledWindows = ""
     val settings = ScreenTimeSettings(
-        readBoolean = { _, _ -> on }, saveBoolean = { _, value -> on = value; true },
+        readBoolean = { _, _ -> on },
+        persist = { bools, longs, strs ->
+            bools[ScreenTimeSettings.KEY]?.let { on = it }
+            longs[ScreenTimeSettings.ENABLED_AT_KEY]?.let { enabledAt = it }
+            longs[ScreenTimeSettings.DISABLED_AT_KEY]?.let { disabledAt = it }
+            longs[ScreenTimeSettings.LAST_PULL_KEY]?.let { lastPull = it }
+            strs[ScreenTimeSettings.DISABLED_WINDOWS_KEY]?.let { disabledWindows = it }
+            true
+        },
         readLong = { key, _ -> when (key) {
             ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt
             ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt
             else -> lastPull } },
-        saveLong = { key, value ->
-            when (key) {
-                ScreenTimeSettings.ENABLED_AT_KEY -> enabledAt = value
-                ScreenTimeSettings.DISABLED_AT_KEY -> disabledAt = value
-                else -> lastPull = value
-            }; true },
         now = { clock },
-        readString = { key, def -> if (key == ScreenTimeSettings.DISABLED_WINDOWS_KEY) disabledWindows else def },
-        saveString = { key, value ->
-            if (key == ScreenTimeSettings.DISABLED_WINDOWS_KEY) disabledWindows = value
-            true
-        })
+        readString = { key, def -> if (key == ScreenTimeSettings.DISABLED_WINDOWS_KEY) disabledWindows else def })
     fun puller(source: ScreenEventSource, dao: ScreenTimeDao, denied: (Throwable) -> Boolean = { false }) =
         ScreenTimePuller(settings, source, dao, now = { clock }, denied = denied)
 }
@@ -360,6 +364,29 @@ class ScreenTimePullerTest {
         assertEquals(2, dao.gaps.count { it.code == GapCode.DISABLED })
     }
 
+    @Test fun secondSuccessfulPullDoesNotDuplicateDisabledGaps() = runBlocking {
+        val dao = FakeDao()
+        val env = FakeSettings(on = true)
+        val t0 = env.clock
+        dao.commitPull(emptyList(), emptyList(), t0, emptyList())
+        env.clock = t0 + 60_000
+        env.settings.setEnabled(false)
+        env.clock = t0 + 120_000
+        env.settings.setEnabled(true)
+        env.clock = t0 + 180_000
+        env.settings.setEnabled(false)
+        env.clock = t0 + 240_000
+        env.settings.setEnabled(true)
+        env.clock = t0 + 271_000
+        assertEquals(PullResult.Pulled(0), env.puller(FakeSource(), dao).pull())
+        assertEquals(2, dao.gaps.count { it.code == GapCode.DISABLED })
+        env.clock += 31_000
+        assertEquals(PullResult.Pulled(0), env.puller(FakeSource(), dao).pull())
+        assertEquals(2, dao.gaps.count { it.code == GapCode.DISABLED })
+        val windows = dao.gaps.filter { it.code == GapCode.DISABLED }.map { it.fromAt to it.untilAt }
+        assertEquals(windows.distinct(), windows)
+    }
+
     @Test fun commitDropsEventsBelowFloorRaisedDuringSince() = runBlocking {
         val dao = FakeDao()
         val env = FakeSettings()
@@ -424,10 +451,51 @@ class ScreenTimeSettingsTest {
 
     @Test fun statePublishesOnlyAfterSaveCommits() {
         val settings = ScreenTimeSettings(
-            readBoolean = { _, def -> def }, saveBoolean = { _, _ -> false },
-            readLong = { _, def -> def }, saveLong = { _, _ -> true },
+            readBoolean = { _, def -> def }, persist = { _, _, _ -> false },
+            readLong = { _, def -> def },
             now = { error("提交失败不得写 enabledAt") })
         try { settings.setEnabled(true) } catch (_: IllegalStateException) {}
         assertFalse(settings.enabled.value) // 提交失败不发布状态
+    }
+
+    @Test fun failedEnableCommitDoesNotBackfillClosedPeriodAfterRebuild() = runBlocking {
+        val t = 1_000_000_000_000L
+        val persistedBool = mutableMapOf(ScreenTimeSettings.KEY to false)
+        val persistedLong = mutableMapOf(
+            ScreenTimeSettings.ENABLED_AT_KEY to t - 600_000,
+            ScreenTimeSettings.DISABLED_AT_KEY to t - 300_000,
+        )
+        val persistedStr = mutableMapOf<String, String>()
+        val broken = ScreenTimeSettings(
+            readBoolean = { key, def -> persistedBool[key] ?: def },
+            persist = persist@{ bools, longs, strings ->
+                if (longs.isNotEmpty() || strings.isNotEmpty()) return@persist false
+                persistedBool.putAll(bools)
+                true
+            },
+            readLong = { key, def -> persistedLong[key] ?: def },
+            now = { t },
+            readString = { key, def -> persistedStr[key] ?: def },
+        )
+        try { broken.setEnabled(true) } catch (_: IllegalStateException) {}
+        assertFalse(broken.enabled.value)
+        assertEquals(false, persistedBool[ScreenTimeSettings.KEY])
+        val restored = ScreenTimeSettings(
+            readBoolean = { key, def -> persistedBool[key] ?: def },
+            persist = { bools, longs, strs ->
+                persistedBool.putAll(bools); persistedLong.putAll(longs); persistedStr.putAll(strs); true
+            },
+            readLong = { key, def -> persistedLong[key] ?: def },
+            now = { t },
+            readString = { key, def -> persistedStr[key] ?: def },
+        )
+        val dao = FakeDao()
+        dao.states[SCREEN_SOURCE] = ScreenPullStateRow(SCREEN_SOURCE, t - 400_000, 0)
+        val closedAt = t - 200_000
+        val source = FakeSource(events = listOf(resumed(closedAt, "off.private.app")))
+        val result = ScreenTimePuller(restored, source, dao, now = { t }, denied = { false }).pull()
+        assertEquals(PullResult.Disabled, result)
+        assertTrue(source.calls.none { (from, until) -> closedAt >= from && closedAt < until })
+        assertTrue(dao.rows.none { it.at == closedAt })
     }
 }
