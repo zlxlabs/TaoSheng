@@ -435,7 +435,8 @@ class AndroidPushChannels internal constructor(
             if (now < due || prefs.getString("screen-time-sent-${channel.id}", null) == today.toString()) continue
             if (!built) {
                 message = try { screenTimeMessage(today) } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                    FailureNotes.record("push/screen-time-generate", e); null
+                    FailureNotes.record("push/screen-time-generate", e)
+                    throw e
                 }
                 built = true
             }

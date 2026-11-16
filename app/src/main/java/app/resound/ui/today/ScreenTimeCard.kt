@@ -56,8 +56,19 @@ internal fun ScreenTimeCard(date: LocalDate) {
     var report by remember(date) { mutableStateOf<ScreenTimeReport?>(null) }
     var open by remember(date) { mutableStateOf(false) }
     var resumeTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(date, resumeTick) {
-        report = withContext(Dispatchers.IO) { loadScreenTimeReport(date) }
+    val app = context.applicationContext as? app.resound.ResoundApp
+    LaunchedEffect(date, resumeTick, app) {
+        val tracker = app?.database?.invalidationTracker
+        if (tracker == null) {
+            report = withContext(Dispatchers.IO) { loadScreenTimeReport(date) }
+            return@LaunchedEffect
+        }
+        tracker.createFlow(
+            "screen_events", "screen_pull_state", "screen_coverage_gaps", "playback_rows",
+            emitInitialState = true,
+        ).collect {
+            report = withContext(Dispatchers.IO) { loadScreenTimeReport(date) }
+        }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         permitted = guess.permitted()
